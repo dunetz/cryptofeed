@@ -1,19 +1,21 @@
 '''
-Copyright (C) 2017-2020  Bryant Moscon - bmoscon@gmail.com
+Copyright (C) 2017-2021  Bryant Moscon - bmoscon@gmail.com
 
 Please see the LICENSE file for the terms and conditions
 associated with this software.
 '''
-import json
 import logging
 from decimal import Decimal
-from itertools import product
 
 from sortedcontainers import SortedDict as sd
+from yapic import json
 
-from cryptofeed.defines import L2_BOOK, BUY, SELL, BID, ASK, TRADES, TICKER, BLOCKCHAIN, L3_BOOK
+from cryptofeed.connection import AsyncConnection
+from cryptofeed.defines import BID, ASK, BLOCKCHAIN, BUY, L2_BOOK, L3_BOOK, SELL, TRADES
+from cryptofeed.exceptions import MissingSequenceNumber
 from cryptofeed.feed import Feed
-from cryptofeed.standards import timestamp_normalize, pair_exchange_to_std
+from cryptofeed.standards import symbol_exchange_to_std, timestamp_normalize
+
 
 LOG = logging.getLogger('feedhandler')
 
@@ -21,11 +23,8 @@ LOG = logging.getLogger('feedhandler')
 class Blockchain(Feed):
     id = BLOCKCHAIN
 
-    def __init__(self, pairs=None, channels=None, callbacks=None, **kwargs):
-        super().__init__("wss://ws.prod.blockchain.info/mercury-gateway/v1/ws",
-                         pairs=pairs, channels=channels, callbacks=callbacks,
-                         origin="https://exchange.blockchain.com",
-                         **kwargs)
+    def __init__(self, **kwargs):
+        super().__init__("wss://ws.prod.blockchain.info/mercury-gateway/v1/ws", origin="https://exchange.blockchain.com", **kwargs)
         self.__reset()
 
     def __reset(self):
@@ -35,7 +34,7 @@ class Blockchain(Feed):
 
     async def _pair_l2_update(self, msg: str, timestamp: float):
         delta = {BID: [], ASK: []}
-        pair = pair_exchange_to_std(msg['symbol'])
+        pair = symbol_exchange_to_std(msg['symbol'])
         forced = False
         if msg['event'] == 'snapshot':
             # Reset the book
@@ -54,12 +53,11 @@ class Blockchain(Feed):
 
         self.l2_book[pair] = book
 
-        await self.book_callback(self.l2_book[pair], L2_BOOK, pair,
-                                 forced, delta, timestamp_normalize(self.id, timestamp), timestamp)
+        await self.book_callback(self.l2_book[pair], L2_BOOK, pair, forced, delta, timestamp, timestamp)
 
     async def _handle_l2_msg(self, msg: str, timestamp: float):
         """
-        Subscribed messsage
+        Subscribed message
         {
           "seqnum": 1,
           "event": "subscribed",
@@ -70,7 +68,7 @@ class Blockchain(Feed):
         """
 
         if msg['event'] == 'subscribed':
-            LOG.info(f"Subscribed to {msg['symbol']}")
+            LOG.info("%s: Subscribed to L2 data for %s", self.id, msg['symbol'])
         elif msg['event'] in ['snapshot', 'updated']:
             await self._pair_l2_update(msg, timestamp)
         else:
@@ -78,7 +76,7 @@ class Blockchain(Feed):
 
     async def _pair_l3_update(self, msg: str, timestamp: float):
         delta = {BID: [], ASK: []}
-        pair = pair_exchange_to_std(msg['symbol'])
+        pair = symbol_exchange_to_std(msg['symbol'])
 
         if msg['event'] == 'snapshot':
             # Reset the book
@@ -105,12 +103,11 @@ class Blockchain(Feed):
 
         self.l3_book[pair] = book
 
-        await self.book_callback(self.l3_book[pair], L3_BOOK, pair,
-                                 False, delta, timestamp_normalize(self.id, timestamp), timestamp)
+        await self.book_callback(self.l3_book[pair], L3_BOOK, pair, False, delta, timestamp, timestamp)
 
     async def _handle_l3_msg(self, msg: str, timestamp: float):
         if msg['event'] == 'subscribed':
-            LOG.info(f"Subscribed to {msg['symbol']}")
+            LOG.info("%s: Subscribed to L3 data for %s", self.id, msg['symbol'])
         elif msg['event'] in ['snapshot', 'updated']:
             await self._pair_l3_update(msg, timestamp)
         else:
@@ -133,7 +130,7 @@ class Blockchain(Feed):
         }
         """
         await self.callback(TRADES, feed=self.id,
-                            pair=msg['symbol'],
+                            symbol=msg['symbol'],
                             side=BUY if msg['side'] == 'buy' else SELL,
                             amount=msg['qty'],
                             price=msg['price'],
@@ -143,16 +140,18 @@ class Blockchain(Feed):
 
     async def _handle_trade_msg(self, msg: str, timestamp: float):
         if msg['event'] == 'subscribed':
-            LOG.info(f"Subscribed to trades for:  {msg['symbol']}")
+            LOG.info("%s: Subscribed to trades channel for %s", self.id, msg['symbol'])
         elif msg['event'] == 'updated':
             await self._trade(msg, timestamp)
         else:
             LOG.warning("%s: Invalid message type %s", self.id, msg)
 
-    async def message_handler(self, msg: str, timestamp: float):
+    async def message_handler(self, msg: str, conn, timestamp: float):
         msg = json.loads(msg, parse_float=Decimal)
         if self.seq_no is not None and msg['seqnum'] != self.seq_no + 1:
-            raise ValueError("Incorrect sequence number. TODO: implement ws restart")
+            LOG.warning("%s: Missing sequence number detected!", self.id)
+            raise MissingSequenceNumber("Missing sequence number, restarting")
+
         self.seq_no = msg['seqnum']
 
         if 'channel' in msg:
@@ -165,19 +164,11 @@ class Blockchain(Feed):
             else:
                 LOG.warning("%s: Invalid message type %s", self.id, msg)
 
-    async def subscribe(self, websocket):
+    async def subscribe(self, conn: AsyncConnection):
         self.__reset()
-        if self.config:
-            for channel in self.config:
-                for pair in self.config[channel]:
-                    await websocket.send(json.dumps({"action": "subscribe",
-                                                     "symbol": pair,
-                                                     "channel": channel
-                                                     }))
-
-        else:
-            for pair, channel in product(self.pairs, self.channels):
-                await websocket.send(json.dumps({"action": "subscribe",
-                                                 "symbol": pair,
-                                                 "channel": channel
-                                                 }))
+        for chan in set(self.channels or self.subscription):
+            for pair in set(self.symbols or self.subscription[chan]):
+                await conn.send(json.dumps({"action": "subscribe",
+                                            "symbol": pair,
+                                            "channel": chan
+                                            }))

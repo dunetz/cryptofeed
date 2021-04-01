@@ -1,20 +1,21 @@
 '''
-Copyright (C) 2017-2020  Bryant Moscon - bmoscon@gmail.com
+Copyright (C) 2017-2021  Bryant Moscon - bmoscon@gmail.com
 
 Please see the LICENSE file for the terms and conditions
 associated with this software.
 '''
-from yapic import json
+import asyncio
 import logging
 from decimal import Decimal
-import asyncio
 
 import aiohttp
 from sortedcontainers import SortedDict as sd
+from yapic import json
 
+from cryptofeed.connection import AsyncConnection
+from cryptofeed.defines import BID, ASK, BITSTAMP, BUY, L2_BOOK, L3_BOOK, SELL, TRADES
 from cryptofeed.feed import Feed
-from cryptofeed.defines import BUY, SELL, BID, ASK, TRADES, L2_BOOK, L3_BOOK, BITSTAMP
-from cryptofeed.standards import pair_exchange_to_std, feed_to_exchange, timestamp_normalize
+from cryptofeed.standards import feed_to_exchange, symbol_exchange_to_std, timestamp_normalize
 
 
 LOG = logging.getLogger('feedhandler')
@@ -24,20 +25,14 @@ class Bitstamp(Feed):
     id = BITSTAMP
     # API documentation: https://www.bitstamp.net/websocket/v2/
 
-    def __init__(self, pairs=None, channels=None, callbacks=None, **kwargs):
-        super().__init__(
-            'wss://ws.bitstamp.net/',
-            pairs=pairs,
-            channels=channels,
-            callbacks=callbacks,
-            **kwargs
-        )
+    def __init__(self, **kwargs):
+        super().__init__('wss://ws.bitstamp.net/', **kwargs)
 
     async def _l2_book(self, msg: dict, timestamp: float):
         data = msg['data']
         chan = msg['channel']
         ts = int(data['microtimestamp'])
-        pair = pair_exchange_to_std(chan.split('_')[-1])
+        pair = symbol_exchange_to_std(chan.split('_')[-1])
         forced = False
         delta = {BID: [], ASK: []}
 
@@ -67,7 +62,7 @@ class Bitstamp(Feed):
         data = msg['data']
         chan = msg['channel']
         ts = int(data['microtimestamp'])
-        pair = pair_exchange_to_std(chan.split('_')[-1])
+        pair = symbol_exchange_to_std(chan.split('_')[-1])
 
         book = {BID: sd(), ASK: sd()}
         for side in (BID, ASK):
@@ -99,7 +94,7 @@ class Bitstamp(Feed):
         """
         data = msg['data']
         chan = msg['channel']
-        pair = pair_exchange_to_std(chan.split('_')[-1])
+        pair = symbol_exchange_to_std(chan.split('_')[-1])
 
         side = BUY if data['type'] == 0 else SELL
         amount = Decimal(data['amount'])
@@ -107,7 +102,7 @@ class Bitstamp(Feed):
         ts = int(data['microtimestamp'])
         order_id = data['id']
         await self.callback(TRADES, feed=self.id,
-                            pair=pair,
+                            symbol=pair,
                             side=side,
                             amount=amount,
                             price=price,
@@ -115,7 +110,8 @@ class Bitstamp(Feed):
                             receipt_timestamp=timestamp,
                             order_id=order_id)
 
-    async def message_handler(self, msg: str, timestamp: float):
+    async def message_handler(self, msg: str, conn, timestamp: float):
+
         msg = json.loads(msg, parse_float=Decimal)
         if 'bts' in msg['event']:
             if msg['event'] == 'bts:connection_established':
@@ -147,7 +143,7 @@ class Bitstamp(Feed):
             results = await asyncio.gather(*[fetch(session, url) for url in urls])
 
         for r, pair in zip(results, pairs):
-            std_pair = pair_exchange_to_std(pair) if pair else 'BTC-USD'
+            std_pair = symbol_exchange_to_std(pair) if pair else 'BTC-USD'
             self.last_update_id[std_pair] = r['timestamp']
             self.l2_book[std_pair] = {BID: sd(), ASK: sd()}
             for s, side in (('bids', BID), ('asks', ASK)):
@@ -156,18 +152,18 @@ class Bitstamp(Feed):
                     amount = Decimal(update[1])
                     self.l2_book[std_pair][side][price] = amount
 
-    async def subscribe(self, websocket):
+    async def subscribe(self, conn: AsyncConnection):
         snaps = []
         self.last_update_id = {}
-        for channel in self.channels if not self.config else self.config:
-            for pair in self.pairs if not self.config else self.config[channel]:
-                await websocket.send(
+        for chan in set(self.channels or self.subscription):
+            for pair in set(self.symbols or self.subscription[chan]):
+                await conn.send(
                     json.dumps({
                         "event": "bts:subscribe",
                         "data": {
-                            "channel": "{}_{}".format(channel, pair)
+                            "channel": f"{chan}_{pair}"
                         }
                     }))
-                if 'diff_order_book' in channel:
+                if 'diff_order_book' in chan:
                     snaps.append(pair)
         await self._snapshot(snaps)

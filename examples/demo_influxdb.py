@@ -1,23 +1,22 @@
 '''
-Copyright (C) 2018-2020  Bryant Moscon - bmoscon@gmail.com
+Copyright (C) 2018-2021  Bryant Moscon - bmoscon@gmail.com
 
 Please see the LICENSE file for the terms and conditions
 associated with this software.
 '''
-from cryptofeed.backends.influxdb import TradeInflux, FundingInflux, BookInflux, BookDeltaInflux, TickerInflux
 from cryptofeed import FeedHandler
+from cryptofeed.backends.influxdb import BookDeltaInflux, BookInflux, FundingInflux, TickerInflux, TradeInflux
+from cryptofeed.defines import BOOK_DELTA, FUNDING, L2_BOOK, TICKER, TRADES
 from cryptofeed.exchanges import Bitmex, Coinbase
-
-from cryptofeed.defines import TRADES, FUNDING, L2_BOOK, BOOK_DELTA, TICKER
 
 
 def main():
 
     f = FeedHandler()
-    f.add_feed(Bitmex(channels=[FUNDING, L2_BOOK], pairs=['XBTUSD'], callbacks={FUNDING: FundingInflux('http://localhost:8086', 'example'), L2_BOOK: BookInflux('http://localhost:8086', 'example', numeric_type=float), BOOK_DELTA: BookDeltaInflux('http://localhost:8086', 'example', numeric_type=float)}))
-    f.add_feed(Coinbase(channels=[TRADES], pairs=['BTC-USD'], callbacks={TRADES: TradeInflux('http://localhost:8086', 'example')}))
-    f.add_feed(Coinbase(channels=[L2_BOOK], pairs=['BTC-USD'], callbacks={L2_BOOK: BookInflux('http://localhost:8086', 'example', numeric_type=float), BOOK_DELTA: BookDeltaInflux('http://localhost:8086', 'example', numeric_type=float)}))
-    f.add_feed(Coinbase(channels=[TICKER], pairs=['BTC-USD'], callbacks={TICKER: TickerInflux('http://localhost:8086', 'example', numeric_type=float)}))
+    f.add_feed(Bitmex(channels=[FUNDING, L2_BOOK], symbols=['BTC-USD'], callbacks={FUNDING: FundingInflux('http://localhost:8086', 'example', create_db=True), L2_BOOK: BookInflux('http://localhost:8086', 'example', create_db=True, numeric_type=float), BOOK_DELTA: BookDeltaInflux('http://localhost:8086', 'example', create_db=True, numeric_type=float)}))
+    f.add_feed(Coinbase(channels=[TRADES], symbols=['BTC-USD'], callbacks={TRADES: TradeInflux('http://localhost:8086', 'example', create_db=True)}))
+    f.add_feed(Coinbase(channels=[L2_BOOK], symbols=['BTC-USD'], callbacks={L2_BOOK: BookInflux('http://localhost:8086', 'example', create_db=True, numeric_type=float), BOOK_DELTA: BookDeltaInflux('http://localhost:8086', 'example', create_db=True, numeric_type=float)}))
+    f.add_feed(Coinbase(channels=[TICKER], symbols=['BTC-USD'], callbacks={TICKER: TickerInflux('http://localhost:8086', 'example', create_db=True, numeric_type=float)}))
 
     """
     # Uncomment Here When Using InfluxDB 2.0
@@ -36,10 +35,10 @@ def main():
     bookdelta_influx = BookDeltaInflux(ADDR, org=ORG, bucket=BUCKET, token=TOKEN, numeric_type=float)
     ticker_influx = TickerInflux(ADDR, org=ORG, bucket=BUCKET, token=TOKEN, numeric_type=float)
 
-    f.add_feed(Bitmex(channels=[FUNDING, L2_BOOK],pairs=['XBTUSD'], callbacks={FUNDING: funding_influx, L2_BOOK: book_influx, BOOK_DELTA: bookdelta_influx}))
-    f.add_feed(Coinbase(channels=[TRADES], pairs=['BTC-USD'], callbacks={TRADES: trade_influx}))
-    f.add_feed(Coinbase(channels=[L2_BOOK], pairs=['BTC-USD'], callbacks={L2_BOOK: book_influx, BOOK_DELTA: bookdelta_influx}))
-    f.add_feed(Coinbase(channels=[TICKER], pairs=['BTC-USD'], callbacks={TICKER: ticker_influx}))
+    f.add_feed(Bitmex(channels=[FUNDING, L2_BOOK],symbols=['BTC-USD'], callbacks={FUNDING: funding_influx, L2_BOOK: book_influx, BOOK_DELTA: bookdelta_influx}))
+    f.add_feed(Coinbase(channels=[TRADES], symbols=['BTC-USD'], callbacks={TRADES: trade_influx}))
+    f.add_feed(Coinbase(channels=[L2_BOOK], symbols=['BTC-USD'], callbacks={L2_BOOK: book_influx, BOOK_DELTA: bookdelta_influx}))
+    f.add_feed(Coinbase(channels=[TICKER], symbols=['BTC-USD'], callbacks={TICKER: ticker_influx}))
     """
 
     f.run()

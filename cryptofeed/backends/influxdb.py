@@ -1,24 +1,27 @@
 '''
-Copyright (C) 2017-2020  Bryant Moscon - bmoscon@gmail.com
+Copyright (C) 2017-2021  Bryant Moscon - bmoscon@gmail.com
 
 Please see the LICENSE file for the terms and conditions
 associated with this software.
 '''
-from decimal import Decimal
 import logging
+from decimal import Decimal
+
 import requests
 
-from cryptofeed.defines import BID, ASK
+from cryptofeed.backends.backend import (BackendBookCallback, BackendBookDeltaCallback, BackendCandlesCallback, BackendFundingCallback,
+                                         BackendOpenInterestCallback, BackendTickerCallback, BackendTradeCallback,
+                                         BackendLiquidationsCallback, BackendMarketInfoCallback, BackendTransactionsCallback)
 from cryptofeed.backends.http import HTTPCallback
+from cryptofeed.defines import BID, ASK
 from cryptofeed.exceptions import UnsupportedType
-from cryptofeed.backends.backend import BackendTradeCallback, BackendBookDeltaCallback, BackendBookCallback, BackendFundingCallback, BackendTickerCallback, BackendOpenInterestCallback
 
 
 LOG = logging.getLogger('feedhandler')
 
 
 class InfluxCallback(HTTPCallback):
-    def __init__(self, addr: str, db=None, key=None, create_db=True, numeric_type=str, org=None, bucket=None, token=None, precision='ns', **kwargs):
+    def __init__(self, addr: str, db=None, key=None, create_db=False, numeric_type=str, org=None, bucket=None, token=None, precision='ns', username=None, password=None, **kwargs):
         """
         Parent class for InfluxDB callbacks
 
@@ -26,15 +29,15 @@ class InfluxCallback(HTTPCallback):
         ---------------
         MEASUREMENT | TAGS | FIELDS
 
-        Measurement: Data Feed-Exxhange (configurable)
-        TAGS: pair
+        Measurement: Data Feed-Exchange (configurable)
+        TAGS: symbol
         FIELDS: timestamp, amount, price, other funding specific fields
 
         Example data in InfluxDB
         ------------------------
         > select * from "book-COINBASE";
         name: COINBASE
-        time                amount    pair    price   side timestamp
+        time                amount    symbol    price   side timestamp
         ----                ------    ----    -----   ---- ---------
         1542577584985404000 0.0018    BTC-USD 5536.17 bid  2018-11-18T21:46:24.963762Z
         1542577584985404000 0.0015    BTC-USD 5542    ask  2018-11-18T21:46:24.963762Z
@@ -61,6 +64,10 @@ class InfluxCallback(HTTPCallback):
           Token string for authentication
         precision: str (For InfluxDB 2.0 compatibility)
           Precision level among (s, ms, us, ns)
+        username: str
+          Influxdb username for authentication
+        password: str
+          Influxdb password for authentication
         """
         super().__init__(addr, **kwargs)
         if org and bucket and token:
@@ -68,20 +75,23 @@ class InfluxCallback(HTTPCallback):
             self.headers = {"Authorization": f"Token {token}"}
         else:
             if create_db:
-                r = requests.post(f'{addr}/query', data={'q': f'CREATE DATABASE {db}'})
+                r = requests.post(f'{addr}/query?u={username}&p={password}', data={'q': f'CREATE DATABASE {db}'})
                 r.raise_for_status()
-            self.addr = f"{addr}/write?db={db}"
+            if username and password:
+                self.addr = f"{addr}/write?db={db}&u={username}&p={password}"
+            else:
+                self.addr = f"{addr}/write?db={db}"
             self.headers = {}
 
         self.session = None
         self.numeric_type = numeric_type
         self.key = key if key else self.default_key
 
-    async def write(self, feed, pair, timestamp, receipt_timestamp, data):
+    async def write(self, feed, symbol, timestamp, receipt_timestamp, data):
         d = ''
 
         for key, value in data.items():
-            if key in {'timestamp', 'feed', 'pair', 'receipt_timestamp'}:
+            if key in {'timestamp', 'feed', 'symbol', 'receipt_timestamp'}:
                 continue
             if isinstance(value, str) or (self.numeric_type is str and isinstance(value, (Decimal, float))):
                 d += f'{key}="{value}",'
@@ -89,8 +99,8 @@ class InfluxCallback(HTTPCallback):
                 d += f'{key}={value},'
         d = d[:-1]
 
-        update = f'{self.key}-{feed},pair={pair} {d},timestamp={timestamp},receipt_timestamp={receipt_timestamp}'
-        await self.http_write('POST', update, self.headers)
+        update = f'{self.key}-{feed},symbol={symbol} {d},timestamp={timestamp},receipt_timestamp={receipt_timestamp}'
+        await self.queue.put({'data': update, 'headers': self.headers})
 
 
 class TradeInflux(InfluxCallback, BackendTradeCallback):
@@ -126,18 +136,18 @@ class InfluxBookCallback(InfluxCallback):
                     else:
                         raise UnsupportedType(f"Type {self.numeric_type} not supported")
                     ts += 1
-        await self.http_write('POST', '\n'.join(msg), self.headers)
+        await self.queue.put({'data': '\n'.join(msg), 'headers': self.headers})
 
 
 class BookInflux(InfluxBookCallback, BackendBookCallback):
-    async def write(self, feed, pair, timestamp, receipt_timestamp, data):
-        start = f"{self.key}-{feed},pair={pair},delta=False"
+    async def write(self, feed, symbol, timestamp, receipt_timestamp, data):
+        start = f"{self.key}-{feed},symbol={symbol},delta=False"
         await self._write_rows(start, data, timestamp, receipt_timestamp)
 
 
 class BookDeltaInflux(InfluxBookCallback, BackendBookDeltaCallback):
-    async def write(self, feed, pair, timestamp, receipt_timestamp, data):
-        start = f"{self.key}-{feed},pair={pair},delta=True"
+    async def write(self, feed, symbol, timestamp, receipt_timestamp, data):
+        start = f"{self.key}-{feed},symbol={symbol},delta=True"
         await self._write_rows(start, data, timestamp, receipt_timestamp)
 
 
@@ -147,3 +157,19 @@ class TickerInflux(InfluxCallback, BackendTickerCallback):
 
 class OpenInterestInflux(InfluxCallback, BackendOpenInterestCallback):
     default_key = 'open_interest'
+
+
+class LiquidationsInflux(InfluxCallback, BackendLiquidationsCallback):
+    default_key = 'liquidations'
+
+
+class MarketInfoInflux(InfluxCallback, BackendMarketInfoCallback):
+    default_key = 'market_info'
+
+
+class TransactionsInflux(InfluxCallback, BackendTransactionsCallback):
+    default_key = 'transactions'
+
+
+class CandlesInflux(InfluxCallback, BackendCandlesCallback):
+    default_key = 'candles'

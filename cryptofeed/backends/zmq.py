@@ -1,18 +1,19 @@
 '''
-Copyright (C) 2017-2020  Bryant Moscon - bmoscon@gmail.com
+Copyright (C) 2017-2021  Bryant Moscon - bmoscon@gmail.com
 
 Please see the LICENSE file for the terms and conditions
 associated with this software.
 '''
-from yapic import json
-
 import zmq
 import zmq.asyncio
+from yapic import json
 
-from cryptofeed.backends.backend import BackendBookCallback, BackendBookDeltaCallback, BackendFundingCallback, BackendTickerCallback, BackendTradeCallback, BackendOpenInterestCallback
+from cryptofeed.backends.backend import (BackendCandlesCallback, BackendQueue, BackendBookCallback, BackendBookDeltaCallback, BackendFundingCallback,
+                                         BackendOpenInterestCallback, BackendTickerCallback, BackendTradeCallback,
+                                         BackendLiquidationsCallback, BackendMarketInfoCallback, BackendTransactionsCallback)
 
 
-class ZMQCallback:
+class ZMQCallback(BackendQueue):
     def __init__(self, host='127.0.0.1', port=5555, numeric_type=float, key=None, dynamic_key=True, **kwargs):
         url = "tcp://{}:{}".format(host, port)
         ctx = zmq.asyncio.Context.instance()
@@ -22,11 +23,16 @@ class ZMQCallback:
         self.numeric_type = numeric_type
         self.dynamic_key = dynamic_key
 
-    async def write(self, feed: str, pair: str, timestamp: float, receipt_timestamp: float, data: dict):
+    async def write(self, feed: str, symbol: str, timestamp: float, receipt_timestamp: float, data: dict):
         if self.dynamic_key:
-            await self.con.send_string(f'{feed}-{self.key}-{pair} {json.dumps(data)}')
+            await self.queue.put(f'{feed}-{self.key}-{symbol} {json.dumps(data)}')
         else:
-            await self.con.send_string(f'{self.key} {json.dumps(data)}')
+            await self.queue.put(f'{self.key} {json.dumps(data)}')
+
+    async def writer(self):
+        while True:
+            async with self.read_queue() as update:
+                await self.con.send_string(update)
 
 
 class TradeZMQ(ZMQCallback, BackendTradeCallback):
@@ -51,3 +57,19 @@ class BookDeltaZMQ(ZMQCallback, BackendBookDeltaCallback):
 
 class OpenInterestZMQ(ZMQCallback, BackendOpenInterestCallback):
     default_key = 'open_interest'
+
+
+class LiquidationsZMQ(ZMQCallback, BackendLiquidationsCallback):
+    default_key = 'liquidations'
+
+
+class MarketInfoZMQ(ZMQCallback, BackendMarketInfoCallback):
+    default_key = 'market_info'
+
+
+class TransactionsZMQ(ZMQCallback, BackendTransactionsCallback):
+    default_key = 'transactions'
+
+
+class CandlesZMQ(ZMQCallback, BackendCandlesCallback):
+    default_key = 'candles'

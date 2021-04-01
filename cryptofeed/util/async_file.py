@@ -1,9 +1,10 @@
 '''
-Copyright (C) 2017-2020  Bryant Moscon - bmoscon@gmail.com
+Copyright (C) 2017-2021  Bryant Moscon - bmoscon@gmail.com
 
 Please see the LICENSE file for the terms and conditions
 associated with this software.
 '''
+import asyncio
 import atexit
 from collections import defaultdict
 
@@ -29,14 +30,22 @@ class AsyncFileCallback:
         p = f"{self.path}/{uuid}.{self.count[uuid]}"
         async with AIOFile(p, mode='a') as fp:
             r = await fp.write("\n".join(self.data[uuid]) + "\n", offset=self.pointer[uuid])
-            self.pointer[uuid] += len(r)
+            self.pointer[uuid] += r
             self.data[uuid] = []
 
         if self.pointer[uuid] >= self.rotate:
             self.count[uuid] += 1
             self.pointer[uuid] = 0
 
-    async def __call__(self, data: str, timestamp: float, uuid: str):
-        self.data[uuid].append(f"{timestamp}: {data}")
+    async def __call__(self, data: str, timestamp: float, uuid: str, endpoint: str = None, send: str = None, connect: str = None):
+        if endpoint:
+            self.data[uuid].append(f"{endpoint} -> {timestamp}: {data}")
+        elif send:
+            self.data[uuid].append(f"{send} <- {timestamp}: {data}")
+        elif connect:
+            self.data[uuid].append(f"{connect} <-> {timestamp}")
+        else:
+            self.data[uuid].append(f"{timestamp}: {data}")
+
         if len(self.data[uuid]) >= self.length:
-            await self.write(uuid)
+            await asyncio.create_task(self.write(uuid))

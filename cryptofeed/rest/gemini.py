@@ -1,18 +1,15 @@
-from time import time, sleep
-import hashlib
-import hmac
-import requests
-from yapic import json
-import base64
 import logging
 from decimal import Decimal
+from time import sleep
 
-from sortedcontainers.sorteddict import SortedDict as sd
 import pandas as pd
+import requests
+from sortedcontainers.sorteddict import SortedDict as sd
 
+from cryptofeed.auth.gemini import generate_token
+from cryptofeed.defines import BID, ASK, BUY, CANCELLED, FILLED, GEMINI, LIMIT, OPEN, PARTIAL, SELL
 from cryptofeed.rest.api import API, request_retry
-from cryptofeed.defines import GEMINI, BID, ASK, CANCELLED, FILLED, OPEN, PARTIAL, BUY, SELL, LIMIT
-from cryptofeed.standards import pair_std_to_exchange, pair_exchange_to_std, normalize_trading_options
+from cryptofeed.standards import normalize_trading_options, symbol_exchange_to_std, symbol_std_to_exchange
 
 
 LOG = logging.getLogger('rest')
@@ -41,7 +38,7 @@ class Gemini(API):
         price = Decimal(data['price']) if Decimal(data['avg_execution_price']) == 0 else Decimal(data['avg_execution_price'])
         return {
             'order_id': data['order_id'],
-            'symbol': pair_exchange_to_std(data['symbol']),
+            'symbol': symbol_exchange_to_std(data['symbol'].upper()),  # Gemini uses lowercase symbols for REST and uppercase for WS
             'side': BUY if data['side'] == 'buy' else SELL,
             'order_type': LIMIT,
             'price': price,
@@ -63,25 +60,14 @@ class Gemini(API):
         return helper()
 
     def _post(self, command: str, payload=None):
-        if not payload:
-            payload = {}
-        payload['request'] = command
-        payload['nonce'] = int(time() * 1000)
+        headers = generate_token(self.config.key_id, self.config.key_secret, command, account_name=self.config.account_name, payload=payload)
+
+        headers['Content-Type'] = "text/plain"
+        headers['Content-Length'] = "0"
+        headers['Cache-Control'] = "no-cache"
 
         api = self.api if not self.sandbox else self.sandbox_api
         api = f"{api}{command}"
-
-        b64_payload = base64.b64encode(json.dumps(payload).encode('utf-8'))
-        signature = hmac.new(self.key_secret.encode('utf-8'), b64_payload, hashlib.sha384).hexdigest()
-
-        headers = {
-            'Content-Type': "text/plain",
-            'Content-Length': "0",
-            'X-GEMINI-APIKEY': self.key_id,
-            'X-GEMINI-PAYLOAD': b64_payload,
-            'X-GEMINI-SIGNATURE': signature,
-            'Cache-Control': "no-cache"
-        }
 
         resp = requests.post(api, headers=headers)
         self._handle_error(resp, LOG)
@@ -90,16 +76,16 @@ class Gemini(API):
 
     # Public Routes
     def ticker(self, symbol: str, retry=None, retry_wait=0):
-        sym = pair_std_to_exchange(symbol, self.ID)
+        sym = symbol_std_to_exchange(symbol, self.ID)
         data = self._get(f"/v1/pubticker/{sym}", retry, retry_wait)
-        return {'pair': symbol,
+        return {'symbol': symbol,
                 'feed': self.ID,
                 'bid': Decimal(data['bid']),
                 'ask': Decimal(data['ask'])
                 }
 
     def l2_book(self, symbol: str, retry=None, retry_wait=0):
-        sym = pair_std_to_exchange(symbol, self.ID)
+        sym = symbol_std_to_exchange(symbol, self.ID)
         data = self._get(f"/v1/book/{sym}", retry, retry_wait)
         return {
             BID: sd({
@@ -113,7 +99,7 @@ class Gemini(API):
         }
 
     def trades(self, symbol: str, start=None, end=None, retry=None, retry_wait=10):
-        sym = pair_std_to_exchange(symbol, self.ID)
+        sym = symbol_std_to_exchange(symbol, self.ID)
         params = {'limit_trades': 500}
         if start:
             params['since'] = int(pd.Timestamp(start).timestamp() * 1000)
@@ -124,7 +110,7 @@ class Gemini(API):
             return {
                 'feed': self.ID,
                 'order_id': trade['tid'],
-                'pair': sym,
+                'symbol': sym,
                 'side': trade['type'],
                 'amount': Decimal(trade['amount']),
                 'price': Decimal(trade['price']),
@@ -153,7 +139,7 @@ class Gemini(API):
         if not price:
             raise ValueError('Gemini only supports limit orders, must specify price')
         ot = normalize_trading_options(self.ID, order_type)
-        sym = pair_std_to_exchange(symbol, self.ID)
+        sym = symbol_std_to_exchange(symbol, self.ID)
 
         parameters = {
             'type': ot,
@@ -183,7 +169,7 @@ class Gemini(API):
         return [Gemini._order_status(d) for d in data]
 
     def trade_history(self, symbol: str, start=None, end=None):
-        sym = pair_std_to_exchange(symbol, self.ID)
+        sym = symbol_std_to_exchange(symbol, self.ID)
 
         params = {
             'symbol': sym,

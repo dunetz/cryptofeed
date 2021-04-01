@@ -1,24 +1,24 @@
 '''
-Copyright (C) 2017-2020  Bryant Moscon - bmoscon@gmail.com
+Copyright (C) 2017-2021  Bryant Moscon - bmoscon@gmail.com
 
 Please see the LICENSE file for the terms and conditions
 associated with this software.
 '''
-import time
-from time import sleep
-from yapic import json
 import hashlib
 import hmac
 import logging
+import time
 from decimal import Decimal
+from time import sleep
 
-from sortedcontainers import SortedDict as sd
 import pandas as pd
 import requests
+from sortedcontainers import SortedDict as sd
+from yapic import json
 
+from cryptofeed.defines import BID, ASK, BITFINEX, BUY, SELL
 from cryptofeed.rest.api import API, request_retry
-from cryptofeed.defines import BITFINEX, SELL, BUY, BID, ASK
-from cryptofeed.standards import pair_std_to_exchange, pair_exchange_to_std, timestamp_normalize
+from cryptofeed.standards import symbol_exchange_to_std, symbol_std_to_exchange, timestamp_normalize
 
 
 REQUEST_LIMIT = 5000
@@ -44,12 +44,12 @@ class Bitfinex(API):
     def _generate_signature(self, url: str, body=json.dumps({})):
         nonce = self._nonce()
         signature = "/api/" + url + nonce + body
-        h = hmac.new(self.key_secret.encode('utf8'), signature.encode('utf8'), hashlib.sha384)
+        h = hmac.new(self.config.key_secret.encode('utf8'), signature.encode('utf8'), hashlib.sha384)
         signature = h.hexdigest()
 
         return {
             "bfx-nonce": nonce,
-            "bfx-apikey": self.key_id,
+            "bfx-apikey": self.config.key_id,
             "bfx-signature": signature,
             "content-type": "application/json"
         }
@@ -64,7 +64,7 @@ class Bitfinex(API):
 
         ret = {
             'timestamp': timestamp_normalize(self.ID, timestamp),
-            'pair': pair_exchange_to_std(symbol),
+            'symbol': symbol_exchange_to_std(symbol),
             'id': trade_id,
             'feed': self.ID,
             'side': SELL if amount < 0 else BUY,
@@ -152,14 +152,14 @@ class Bitfinex(API):
                 break
 
     def trades(self, symbol: str, start=None, end=None, retry=None, retry_wait=10):
-        symbol = pair_std_to_exchange(symbol, self.ID)
+        symbol = symbol_std_to_exchange(symbol, self.ID)
         for data in self._get_trades_hist(symbol, start, end, retry, retry_wait):
             yield data
 
     def ticker(self, symbol: str, retry=None, retry_wait=0):
-        sym = pair_std_to_exchange(symbol, self.ID)
+        sym = symbol_std_to_exchange(symbol, self.ID)
         data = self._get(f"ticker/{sym}", retry, retry_wait)
-        return {'pair': symbol,
+        return {'symbol': symbol,
                 'feed': self.ID,
                 'bid': Decimal(data[0]),
                 'ask': Decimal(data[2])
@@ -186,7 +186,7 @@ class Bitfinex(API):
             symbol = f"f{symbol}"
             funding = True
         else:
-            symbol = pair_std_to_exchange(symbol, self.ID)
+            symbol = symbol_std_to_exchange(symbol, self.ID)
             ret[symbol] = {BID: sd(), ASK: sd()}
             sym = symbol
 
@@ -221,7 +221,7 @@ class Bitfinex(API):
                 else:
                     order_id, price, amount = entry
                     update = abs(amount)
-                side = BID if (amount > 0 and funding == False) or (amount < 0 and funding == True) else ASK
+                side = BID if (amount > 0 and not funding) or (amount < 0 and funding) else ASK
                 if price not in ret[sym][side]:
                     ret[sym][side][price] = {order_id: update}
                 else:
@@ -234,6 +234,6 @@ class Bitfinex(API):
                 else:
                     price, _, amount = entry
                     update = abs(amount)
-                side = BID if (amount > 0 and funding == False) or (amount < 0 and funding == True) else ASK
+                side = BID if (amount > 0 and not funding) or (amount < 0 and funding) else ASK
                 ret[sym][side][price] = update
         return ret

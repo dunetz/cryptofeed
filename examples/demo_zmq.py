@@ -1,17 +1,17 @@
 '''
-Copyright (C) 2018-2020  Bryant Moscon - bmoscon@gmail.com
+Copyright (C) 2018-2021  Bryant Moscon - bmoscon@gmail.com
 
 Please see the LICENSE file for the terms and conditions
 associated with this software.
 '''
 from multiprocessing import Process
+
 from yapic import json
 
-from cryptofeed.backends.zmq import BookZMQ, TickerZMQ
 from cryptofeed import FeedHandler
-from cryptofeed.exchanges import Kraken, Coinbase
-
+from cryptofeed.backends.zmq import BookZMQ, TickerZMQ
 from cryptofeed.defines import L2_BOOK, TICKER
+from cryptofeed.exchanges import Coinbase, Kraken
 
 
 def receiver(port):
@@ -37,8 +37,8 @@ def main():
         p.start()
 
         f = FeedHandler()
-        f.add_feed(Kraken(max_depth=1, channels=[L2_BOOK], pairs=['ETH-USD'], callbacks={L2_BOOK: BookZMQ(port=5678)}))
-        f.add_feed(Coinbase(channels=[TICKER], pairs=['BTC-USD'], callbacks={TICKER: TickerZMQ(port=5678)}))
+        f.add_feed(Kraken(max_depth=1, channels=[L2_BOOK], symbols=['ETH-USD'], callbacks={L2_BOOK: BookZMQ(port=5678)}))
+        f.add_feed(Coinbase(channels=[TICKER], symbols=['BTC-USD'], callbacks={TICKER: TickerZMQ(port=5678)}))
 
         f.run()
 

@@ -1,20 +1,19 @@
 '''
-Copyright (C) 2017-2020  Bryant Moscon - bmoscon@gmail.com
+Copyright (C) 2017-2021  Bryant Moscon - bmoscon@gmail.com
 
 Please see the LICENSE file for the terms and conditions
 associated with this software.
 '''
-import os
-from functools import wraps
-from time import sleep
 import logging
 from decimal import Decimal
+from functools import wraps
+from time import sleep
 
 import pandas as pd
 import requests
-import yaml
 
-from cryptofeed.standards import load_exchange_pair_mapping
+from cryptofeed.standards import load_exchange_symbol_mapping
+
 
 LOG = logging.getLogger('rest')
 
@@ -55,23 +54,10 @@ def request_retry(exchange, retry, retry_wait):
 class API:
     ID = 'NotImplemented'
 
-    def __init__(self, config, sandbox=False):
+    def __init__(self, config=None, sandbox=False):
         self.mapped = False
-        path = os.path.dirname(os.path.abspath(__file__))
-        self.key_id, self.key_secret, self.key_passphrase = None, None, None
         self.sandbox = sandbox
-        if not config:
-            config = "config.yaml"
-
-        try:
-            with open(os.path.join(path, config), 'r') as fp:
-                data = yaml.safe_load(fp)
-                self.key_id = data[self.ID.lower()]['key_id']
-                self.key_secret = data[self.ID.lower()]['key_secret']
-                if 'key_passphrase' in data[self.ID.lower()]:
-                    self.key_passphrase = data[self.ID.lower()]['key_passphrase']
-        except (KeyError, FileNotFoundError, TypeError):
-            pass
+        self.config = config
 
     @staticmethod
     def _timestamp(ts):
@@ -133,9 +119,9 @@ class API:
     def __getitem__(self, key):
         if not self.mapped:
             try:
-                load_exchange_pair_mapping(self.ID + 'REST')
+                load_exchange_symbol_mapping(self.ID + 'REST')
             except KeyError:
-                load_exchange_pair_mapping(self.ID)
+                load_exchange_symbol_mapping(self.ID)
             self.mapped = True
         if key == 'trades':
             return self.trades

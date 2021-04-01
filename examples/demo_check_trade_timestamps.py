@@ -1,17 +1,18 @@
+import collections
 import os
 import time
-import collections
 from datetime import datetime
-from cryptofeed.callback import TickerCallback, TradeCallback, BookCallback, FundingCallback
+
 from cryptofeed import FeedHandler
-from cryptofeed.defines import L2_BOOK, BID, ASK, TRADES, TICKER, FUNDING
-from cryptofeed.defines import BINANCE, BITFINEX, BITMEX, BITSTAMP, BYBIT, COINBASE, DERIBIT, EXX, GEMINI, HITBTC, HUOBI, KRAKEN, OKCOIN, OKEX, POLONIEX
+from cryptofeed.callback import TradeCallback
+from cryptofeed.defines import TRADES
+
 
 # Gathers the first trade of each exchange and prints out info on the timestamps.
-# To add an exchange, setup exch_sym_map with the most liquid pair.
+# To add an exchange, setup exch_sym_map with the most liquid symbol.
 # Sample output:
 '''
-$ python demo_checki_trade_timestamps.py 
+$ python demo_checki_trade_timestamps.py
 Starting: 1562808668.105481
 [0]: Subscribing to Binance
 [1]: Subscribing to Bitfinex
@@ -62,10 +63,10 @@ Ending: 1562808727.693259
 '''
 
 
-async def trade(feed, pair, order_id, timestamp, side, amount, price):
+async def trade(feed, symbol, order_id, timestamp, receipt_timestamp, side, amount, price):
     if feed not in trades:
         print(f'Added {feed}.')
-        #exch_count += 1
+        # exch_count += 1
         trades[feed]['timestamp'] = timestamp
         trades[feed]['order_id'] = order_id
         if exchanges == set(trades.keys()):
@@ -85,7 +86,7 @@ def main():
     exch_sym_map = {}
     exch_sym_map['Binance'] = ['BTC-USDT', 'BTC-USDC', 'BTC-TUSD']
     exch_sym_map['Bitfinex'] = ['BTC-USD']
-    exch_sym_map['BitMEX'] = ['XBTUSD']
+    exch_sym_map['BitMEX'] = ['BTC-USD']
     exch_sym_map['Bitstamp'] = ['BTC-USD']
     exch_sym_map['Bybit'] = ['BTC-USD']
     exch_sym_map['Coinbase'] = ['BTC-USD']
@@ -107,9 +108,9 @@ def main():
     for i, e in enumerate(exch_sym_map):
         print(f'{[i]}: Subscribing to {e}')
         if e == 'Gemini':
-            f.add_feed(e.upper(), pairs=exch_sym_map[e], callbacks={TRADES: TradeCallback(trade)})
+            f.add_feed(e.upper(), symbols=exch_sym_map[e], callbacks={TRADES: TradeCallback(trade)})
         else:
-            f.add_feed(e.upper(), pairs=exch_sym_map[e], channels=channels, callbacks={TRADES: TradeCallback(trade)})
+            f.add_feed(e.upper(), symbols=exch_sym_map[e], channels=channels, callbacks={TRADES: TradeCallback(trade)})
     f.run()
 
 

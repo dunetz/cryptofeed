@@ -1,13 +1,14 @@
 import logging
-from yapic import json
 from decimal import Decimal
+import uuid
 
-import requests
 from sortedcontainers import SortedDict as sd
+from yapic import json
 
+from cryptofeed.connection import AsyncConnection
+from cryptofeed.defines import BID, ASK, BUY, L2_BOOK, SELL, TICKER, TRADES, UPBIT
 from cryptofeed.feed import Feed
-from cryptofeed.defines import UPBIT, BUY, SELL, TRADES, BID, ASK, L2_BOOK, TICKER
-from cryptofeed.standards import timestamp_normalize, pair_exchange_to_std, load_exchange_pair_mapping
+from cryptofeed.standards import symbol_exchange_to_std, timestamp_normalize
 
 
 LOG = logging.getLogger('feedhandler')
@@ -17,27 +18,8 @@ class Upbit(Feed):
     id = UPBIT
     api = 'https://api.upbit.com/v1/'
 
-    def __init__(self, pairs=None, channels=None, callbacks=None, **kwargs):
-        super().__init__('wss://api.upbit.com/websocket/v1', pairs=pairs, channels=channels, callbacks=callbacks, **kwargs)
-        self.__reset()
-
-    def __reset(self):
-        pass
-
-    @staticmethod
-    def get_active_symbols_info():
-        return requests.get(Upbit.api + 'market/all').json()
-
-    @staticmethod
-    def get_active_symbols():
-        load_exchange_pair_mapping(Upbit.id)
-        symbols = []
-        for data in Upbit.get_active_symbols_info():
-            symbols.append(pair_exchange_to_std(data['market']))
-        return symbols
-
-    async def _snapshot(self, pair: str):
-        self.l2_book[pair] = {BID: sd(), ASK: sd()}
+    def __init__(self, **kwargs):
+        super().__init__('wss://api.upbit.com/websocket/v1', **kwargs)
 
     async def _trade(self, msg: dict, timestamp: float):
         """
@@ -65,7 +47,7 @@ class Upbit(Feed):
         amount = Decimal(msg['tv'])
         await self.callback(TRADES, feed=self.id,
                             order_id=msg['sid'],
-                            pair=pair_exchange_to_std(msg['cd']),
+                            symbol=symbol_exchange_to_std(msg['cd']),
                             side=BUY if msg['ab'] == 'BID' else SELL,
                             amount=amount,
                             price=price,
@@ -102,14 +84,9 @@ class Upbit(Feed):
             'tms': 1584263923870,  // Timestamp
         }
         """
-        pair = pair_exchange_to_std(msg['cd'])
+        pair = symbol_exchange_to_std(msg['cd'])
         orderbook_timestamp = timestamp_normalize(self.id, msg['tms'])
-
-        if pair not in self.l2_book:
-            await self._snapshot(pair)
-
-        # forced = True if the snapshot received, otherwise(realtime) forced set to be false
-        forced = True if msg['st'] == 'SNAPSHOT' else False
+        forced = pair not in self.l2_book
 
         update = {
             BID: sd({
@@ -176,7 +153,8 @@ class Upbit(Feed):
         # Only way for tracking best_ask and best_bid price is looking at the orderbook directly.
         raise NotImplementedError
 
-    async def message_handler(self, msg: str, timestamp: float):
+    async def message_handler(self, msg: str, conn, timestamp: float):
+
         msg = json.loads(msg, parse_float=Decimal)
 
         if msg['ty'] == "trade":
@@ -188,7 +166,7 @@ class Upbit(Feed):
         else:
             LOG.warning("%s: Unhandled message %s", self.id, msg)
 
-    async def subscribe(self, websocket):
+    async def subscribe(self, conn: AsyncConnection):
         """
         Doc : https://docs.upbit.com/docs/upbit-quotation-websocket
 
@@ -214,18 +192,14 @@ class Upbit(Feed):
         > [{"ticket":"UNIQUE_TICKET"},{"format":"SIMPLE"},{"type":"trade","codes":["KRW-BTC"]},{"type":"orderbook","codes":["KRW-ETH"]},{"type":"ticker", "codes":["KRW-EOS"]}]
         """
 
-        self.__reset()
-        chans = [{"ticket": "UNIQUE_TICKET"}, {"format": "SIMPLE"}]
-        for channel in self.channels if not self.config else self.config:
-            codes = list()
-            for pair in self.pairs if not self.config else self.config[channel]:
-                codes.append(pair)
+        chans = [{"ticket": uuid.uuid4()}, {"format": "SIMPLE"}]
+        for chan in set(self.channels or self.subscription):
+            codes = list(set(self.symbols or self.subscription[chan]))
+            if chan == L2_BOOK:
+                chans.append({"type": "orderbook", "codes": codes, 'isOnlyRealtime': True})
+            if chan == TRADES:
+                chans.append({"type": "trade", "codes": codes, 'isOnlyRealtime': True})
+            if chan == TICKER:
+                chans.append({"type": "ticker", "codes": codes, 'isOnlyRealtime': True})
 
-            if channel == L2_BOOK:
-                chans.append({"type": "orderbook", "codes": codes})
-            if channel == TRADES:
-                chans.append({"type": "trade", "codes": codes})
-            if channel == TICKER:
-                chans.append({"type": "ticker", "codes": codes})
-
-        await websocket.send(json.dumps(chans))
+        await conn.send(json.dumps(chans))

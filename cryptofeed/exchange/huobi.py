@@ -1,19 +1,20 @@
 '''
-Copyright (C) 2017-2020  Bryant Moscon - bmoscon@gmail.com
+Copyright (C) 2017-2021  Bryant Moscon - bmoscon@gmail.com
 
 Please see the LICENSE file for the terms and conditions
 associated with this software.
 '''
 import logging
-from yapic import json
-from decimal import Decimal
 import zlib
+from decimal import Decimal
 
 from sortedcontainers import SortedDict as sd
+from yapic import json
 
+from cryptofeed.connection import AsyncConnection
+from cryptofeed.defines import BID, ASK, BUY, HUOBI, L2_BOOK, SELL, TRADES
 from cryptofeed.feed import Feed
-from cryptofeed.defines import HUOBI, BUY, SELL, TRADES, BID, ASK, L2_BOOK
-from cryptofeed.standards import pair_exchange_to_std, timestamp_normalize
+from cryptofeed.standards import symbol_exchange_to_std, timestamp_normalize
 
 
 LOG = logging.getLogger('feedhandler')
@@ -22,15 +23,15 @@ LOG = logging.getLogger('feedhandler')
 class Huobi(Feed):
     id = HUOBI
 
-    def __init__(self, pairs=None, channels=None, callbacks=None, config=None, **kwargs):
-        super().__init__('wss://api.huobi.pro/ws', pairs=pairs, channels=channels, config=config, callbacks=callbacks, **kwargs)
+    def __init__(self, **kwargs):
+        super().__init__('wss://api.huobi.pro/ws', **kwargs)
         self.__reset()
 
     def __reset(self):
         self.l2_book = {}
 
     async def _book(self, msg: dict, timestamp: float):
-        pair = pair_exchange_to_std(msg['ch'].split('.')[1])
+        pair = symbol_exchange_to_std(msg['ch'].split('.')[1])
         data = msg['tick']
         forced = pair not in self.l2_book
 
@@ -54,32 +55,44 @@ class Huobi(Feed):
     async def _trade(self, msg: dict, timestamp: float):
         """
         {
-            'ch': 'market.btcusd.trade.detail',
-            'ts': 1549773923965,
+            'ch': 'market.adausdt.trade.detail',
+            'ts': 1597792835344,
             'tick': {
-                'id': 100065340982,
-                'ts': 1549757127140,
-                'data': [{'id': '10006534098224147003732', 'amount': Decimal('0.0777'), 'price': Decimal('3669.69'), 'direction': 'buy', 'ts': 1549757127140}]}}
+                'id': 101801945127,
+                'ts': 1597792835336,
+                'data': [
+                    {
+                        'id': Decimal('10180194512782291967181675'),   <- per docs this is deprecated
+                        'ts': 1597792835336,
+                        'tradeId': 100341530602,
+                        'amount': Decimal('0.1'),
+                        'price': Decimal('0.137031'),
+                        'direction': 'sell'
+                    }
+                ]
+            }
+        }
         """
         for trade in msg['tick']['data']:
             await self.callback(TRADES,
                                 feed=self.id,
-                                pair=pair_exchange_to_std(msg['ch'].split('.')[1]),
-                                order_id=trade['id'],
+                                symbol=symbol_exchange_to_std(msg['ch'].split('.')[1]),
+                                order_id=trade['tradeId'],
                                 side=BUY if trade['direction'] == 'buy' else SELL,
                                 amount=Decimal(trade['amount']),
                                 price=Decimal(trade['price']),
                                 timestamp=timestamp_normalize(self.id, trade['ts']),
                                 receipt_timestamp=timestamp)
 
-    async def message_handler(self, msg: str, timestamp: float):
+    async def message_handler(self, msg: str, conn, timestamp: float):
+
         # unzip message
         msg = zlib.decompress(msg, 16 + zlib.MAX_WBITS)
         msg = json.loads(msg, parse_float=Decimal)
 
         # Huobi sends a ping evert 5 seconds and will disconnect us if we do not respond to it
         if 'ping' in msg:
-            await self.websocket.send(json.dumps({'pong': msg['ping']}))
+            await conn.send(json.dumps({'pong': msg['ping']}))
         elif 'status' in msg and msg['status'] == 'ok':
             return
         elif 'ch' in msg:
@@ -92,14 +105,13 @@ class Huobi(Feed):
         else:
             LOG.warning("%s: Invalid message type %s", self.id, msg)
 
-    async def subscribe(self, websocket):
-        self.websocket = websocket
+    async def subscribe(self, conn: AsyncConnection):
         self.__reset()
         client_id = 0
-        for chan in self.channels if self.channels else self.config:
-            for pair in self.pairs if self.pairs else self.config[chan]:
+        for chan in set(self.channels or self.subscription):
+            for pair in set(self.symbols or self.subscription[chan]):
                 client_id += 1
-                await websocket.send(json.dumps(
+                await conn.send(json.dumps(
                     {
                         "sub": f"market.{pair}.{chan}",
                         "id": client_id

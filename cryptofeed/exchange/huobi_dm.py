@@ -26,15 +26,16 @@ So we return BTC190927 as the pair name for the BTC quarterly future.
 
 '''
 import logging
-from yapic import json
-from decimal import Decimal
 import zlib
+from decimal import Decimal
 
 from sortedcontainers import SortedDict as sd
+from yapic import json
 
-from cryptofeed.defines import HUOBI_DM, BUY, SELL, TRADES, BID, ASK, L2_BOOK
+from cryptofeed.connection import AsyncConnection
+from cryptofeed.defines import BID, ASK, BUY, HUOBI_DM, L2_BOOK, SELL, TRADES
 from cryptofeed.feed import Feed
-from cryptofeed.standards import pair_std_to_exchange, pair_exchange_to_std, timestamp_normalize
+from cryptofeed.standards import symbol_exchange_to_std, symbol_std_to_exchange, timestamp_normalize
 
 
 LOG = logging.getLogger('feedhandler')
@@ -43,8 +44,8 @@ LOG = logging.getLogger('feedhandler')
 class HuobiDM(Feed):
     id = HUOBI_DM
 
-    def __init__(self, pairs=None, channels=None, callbacks=None, config=None, **kwargs):
-        super().__init__('wss://www.hbdm.com/ws', pairs=pairs, channels=channels, callbacks=callbacks, config=config, **kwargs)
+    def __init__(self, **kwargs):
+        super().__init__('wss://www.hbdm.com/ws', **kwargs)
 
     def __reset(self):
         self.l2_book = {}
@@ -69,26 +70,30 @@ class HuobiDM(Feed):
             'ch':'market.BTC_CW.depth.step0'
         }
         """
-        pair = pair_std_to_exchange(msg['ch'].split('.')[1], self.id)
+        pair = symbol_std_to_exchange(msg['ch'].split('.')[1], self.id)
         data = msg['tick']
         forced = pair not in self.l2_book
 
-        update = {
-            BID: sd({
-                Decimal(price): Decimal(amount)
-                for price, amount in data['bids']
-            }),
-            ASK: sd({
-                Decimal(price): Decimal(amount)
-                for price, amount in data['asks']
-            })
-        }
+        # When Huobi Delists pairs, empty updates still sent:
+        # {'ch': 'market.AKRO-USD.depth.step0', 'ts': 1606951241196, 'tick': {'mrid': 50651100044, 'id': 1606951241, 'ts': 1606951241195, 'version': 1606951241, 'ch': 'market.AKRO-USD.depth.step0'}}
+        # {'ch': 'market.AKRO-USD.depth.step0', 'ts': 1606951242297, 'tick': {'mrid': 50651100044, 'id': 1606951242, 'ts': 1606951242295, 'version': 1606951242, 'ch': 'market.AKRO-USD.depth.step0'}}
+        if 'bids' in data and 'asks' in data:
+            update = {
+                BID: sd({
+                    Decimal(price): Decimal(amount)
+                    for price, amount in data['bids']
+                }),
+                ASK: sd({
+                    Decimal(price): Decimal(amount)
+                    for price, amount in data['asks']
+                })
+            }
 
-        if not forced:
-            self.previous_book[pair] = self.l2_book[pair]
-        self.l2_book[pair] = update
+            if not forced:
+                self.previous_book[pair] = self.l2_book[pair]
+            self.l2_book[pair] = update
 
-        await self.book_callback(self.l2_book[pair], L2_BOOK, pair, forced, False, timestamp_normalize(self.id, msg['ts']), timestamp)
+            await self.book_callback(self.l2_book[pair], L2_BOOK, pair, forced, False, timestamp_normalize(self.id, msg['ts']), timestamp)
 
     async def _trade(self, msg: dict, timestamp: float):
         """
@@ -104,7 +109,7 @@ class HuobiDM(Feed):
         for trade in msg['tick']['data']:
             await self.callback(TRADES,
                                 feed=self.id,
-                                pair=pair_std_to_exchange(msg['ch'].split('.')[1], self.id),
+                                symbol=symbol_std_to_exchange(msg['ch'].split('.')[1], self.id),
                                 order_id=trade['id'],
                                 side=BUY if trade['direction'] == 'buy' else SELL,
                                 amount=Decimal(trade['amount']),
@@ -113,14 +118,15 @@ class HuobiDM(Feed):
                                 receipt_timestamp=timestamp
                                 )
 
-    async def message_handler(self, msg: str, timestamp: float):
+    async def message_handler(self, msg: str, conn, timestamp: float):
+
         # unzip message
         msg = zlib.decompress(msg, 16 + zlib.MAX_WBITS)
         msg = json.loads(msg, parse_float=Decimal)
 
         # Huobi sends a ping evert 5 seconds and will disconnect us if we do not respond to it
         if 'ping' in msg:
-            await self.websocket.send(json.dumps({'pong': msg['ping']}))
+            await conn.send(json.dumps({'pong': msg['ping']}))
         elif 'status' in msg and msg['status'] == 'ok':
             return
         elif 'ch' in msg:
@@ -133,15 +139,14 @@ class HuobiDM(Feed):
         else:
             LOG.warning("%s: Invalid message type %s", self.id, msg)
 
-    async def subscribe(self, websocket):
-        self.websocket = websocket
+    async def subscribe(self, conn: AsyncConnection):
         self.__reset()
         client_id = 0
-        for chan in self.channels if self.channels else self.config:
-            for pair in self.pairs if self.pairs else self.config[chan]:
+        for chan in set(self.channels or self.subscription):
+            for pair in set(self.symbols or self.subscription[chan]):
                 client_id += 1
-                pair = pair_exchange_to_std(pair)
-                await websocket.send(json.dumps(
+                pair = symbol_exchange_to_std(pair)
+                await conn.send(json.dumps(
                     {
                         "sub": f"market.{pair}.{chan}",
                         "id": str(client_id)

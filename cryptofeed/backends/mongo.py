@@ -1,13 +1,16 @@
 '''
-Copyright (C) 2017-2020  Bryant Moscon - bmoscon@gmail.com
+Copyright (C) 2017-2021  Bryant Moscon - bmoscon@gmail.com
 
 Please see the LICENSE file for the terms and conditions
 associated with this software.
 '''
-import motor.motor_asyncio
 import bson
+import motor.motor_asyncio
 
-from cryptofeed.backends.backend import BackendBookCallback, BackendBookDeltaCallback, BackendFundingCallback, BackendTickerCallback, BackendTradeCallback, BackendOpenInterestCallback
+
+from cryptofeed.backends.backend import (BackendBookCallback, BackendBookDeltaCallback, BackendCandlesCallback, BackendFundingCallback,
+                                         BackendOpenInterestCallback, BackendTickerCallback, BackendTradeCallback,
+                                         BackendLiquidationsCallback, BackendMarketInfoCallback, BackendTransactionsCallback)
 
 
 class MongoCallback:
@@ -17,9 +20,12 @@ class MongoCallback:
         self.numeric_type = numeric_type
         self.collection = key if key else self.default_key
 
-    async def write(self, feed: str, pair: str, timestamp: float, receipt_timestamp: float, data: dict):
-        d = {'feed': feed, 'pair': pair, 'timestamp': timestamp, 'receipt_timestamp': timestamp, 'delta': data['delta'], 'bid': bson.BSON.encode(data['bid']), 'ask': bson.BSON.encode(data['ask'])}
-        await self.db[self.collection].insert_one(d)
+    async def write(self, feed: str, symbol: str, timestamp: float, receipt_timestamp: float, data: dict):
+        if 'delta' in data:
+            d = {'feed': feed, 'symbol': symbol, 'timestamp': timestamp, 'receipt_timestamp': receipt_timestamp, 'delta': data['delta'], 'bid': bson.BSON.encode(data['bid']), 'ask': bson.BSON.encode(data['ask'])}
+            await self.db[self.collection].insert_one(d)
+        else:
+            await self.db[self.collection].insert_one(data)
 
 
 class TradeMongo(MongoCallback, BackendTradeCallback):
@@ -44,3 +50,19 @@ class TickerMongo(MongoCallback, BackendTickerCallback):
 
 class OpenInterestMongo(MongoCallback, BackendOpenInterestCallback):
     default_key = 'open_interest'
+
+
+class LiquidationsMongo(MongoCallback, BackendLiquidationsCallback):
+    default_key = 'liquidations'
+
+
+class MarketInfoMongo(MongoCallback, BackendMarketInfoCallback):
+    default_key = 'market_info'
+
+
+class TransactionsMongo(MongoCallback, BackendTransactionsCallback):
+    default_key = 'transactions'
+
+
+class CandlesMongo(MongoCallback, BackendCandlesCallback):
+    default_key = 'candles'

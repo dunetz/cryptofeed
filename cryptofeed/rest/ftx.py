@@ -1,19 +1,21 @@
 '''
-Copyright (C) 2017-2019  Bryant Moscon - bmoscon@gmail.com
+Copyright (C) 2017-2021  Bryant Moscon - bmoscon@gmail.com
 
 Please see the LICENSE file for the terms and conditions
 associated with this software.
 '''
-import requests
 import logging
 from time import sleep
 
 import pandas as pd
+import requests
 from sortedcontainers.sorteddict import SortedDict as sd
 
+from cryptofeed.defines import BID, ASK, BUY
+from cryptofeed.defines import FTX as FTX_ID
+from cryptofeed.defines import SELL
 from cryptofeed.rest.api import API, request_retry
-from cryptofeed.defines import FTX as FTX_ID, SELL, BUY, BID, ASK
-from cryptofeed.standards import pair_std_to_exchange
+from cryptofeed.standards import symbol_std_to_exchange
 
 
 LOG = logging.getLogger('rest')
@@ -36,17 +38,17 @@ class FTX(API):
         return helper()
 
     def ticker(self, symbol: str, retry=None, retry_wait=0):
-        sym = pair_std_to_exchange(symbol, self.ID)
+        sym = symbol_std_to_exchange(symbol, self.ID)
         data = self._get(f"/markets/{sym}", retry=retry, retry_wait=retry_wait)
 
-        return {'pair': symbol,
+        return {'symbol': symbol,
                 'feed': self.ID,
                 'bid': data['result']['bid'],
                 'ask': data['result']['ask']
                 }
 
     def l2_book(self, symbol: str, retry=None, retry_wait=0):
-        sym = pair_std_to_exchange(symbol, self.ID)
+        sym = symbol_std_to_exchange(symbol, self.ID)
         data = self._get(f"/markets/{sym}/orderbook", {'depth': 100}, retry=retry, retry_wait=retry_wait)
         return {
             BID: sd({
@@ -60,12 +62,11 @@ class FTX(API):
         }
 
     def trades(self, symbol: str, start=None, end=None, retry=None, retry_wait=10):
-        symbol = pair_std_to_exchange(symbol, self.ID)
+        symbol = symbol_std_to_exchange(symbol, self.ID)
         for data in self._get_trades_hist(symbol, start, end, retry, retry_wait):
             yield data
 
     def funding(self, symbol: str, start_date=None, end_date=None, retry=None, retry_wait=10):
-        last = []
         start = None
         end = None
 
@@ -108,10 +109,6 @@ class FTX(API):
                 LOG.warning("%s: No data for range %d - %d", self.ID, start, end)
             else:
                 end = int(API._timestamp(data[-1]["time"]).timestamp()) + 1
-
-            orig_data = list(data)
-            # data = self._dedupe(data, last)
-            # last = list(orig_data)
 
             data = [self._funding_normalization(x, symbol) for x in data]
             return data
@@ -190,7 +187,7 @@ class FTX(API):
     def _trade_normalization(self, trade: dict, symbol: str) -> dict:
         return {
             'timestamp': API._timestamp(trade['time']).timestamp(),
-            'pair': symbol,
+            'symbol': symbol,
             'id': trade['id'],
             'feed': self.ID,
             'side': SELL if trade['side'] == 'sell' else BUY,
@@ -199,10 +196,9 @@ class FTX(API):
         }
 
     def _funding_normalization(self, funding: dict, symbol: str) -> dict:
-        ts = pd.to_datetime(funding['time'], format="%Y-%m-%dT%H:%M:%S%z")
         return {
             'timestamp': API._timestamp(funding['time']).timestamp(),
-            'pair': funding['future'],
+            'symbol': funding['future'],
             'feed': self.ID,
             'rate': funding['rate']
         }

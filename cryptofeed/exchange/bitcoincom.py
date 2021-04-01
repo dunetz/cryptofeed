@@ -1,20 +1,20 @@
 '''
-Copyright (C) 2017-2020  Bryant Moscon - bmoscon@gmail.com
+Copyright (C) 2017-2021  Bryant Moscon - bmoscon@gmail.com
 
 Please see the LICENSE file for the terms and conditions
 associated with this software.
 '''
-from yapic import json
 import logging
 from decimal import Decimal
 
 from sortedcontainers import SortedDict as sd
+from yapic import json
 
+from cryptofeed.connection import AsyncConnection
+from cryptofeed.defines import BID, ASK, BITCOINCOM, BUY, L2_BOOK, SELL, TICKER, TRADES
 from cryptofeed.exceptions import MissingSequenceNumber
 from cryptofeed.feed import Feed
-from cryptofeed.defines import BITCOINCOM
-from cryptofeed.defines import TRADES, BUY, SELL, BID, ASK, TICKER, L2_BOOK
-from cryptofeed.standards import pair_exchange_to_std, timestamp_normalize
+from cryptofeed.standards import symbol_exchange_to_std, timestamp_normalize
 
 
 LOG = logging.getLogger('feedhandler')
@@ -23,20 +23,19 @@ LOG = logging.getLogger('feedhandler')
 class BitcoinCom(Feed):
     id = BITCOINCOM
 
-    def __init__(self, pairs=None, channels=None, callbacks=None, **kwargs):
-        super().__init__('wss://api.exchange.bitcoin.com/api/2/ws', pairs=pairs, channels=channels, callbacks=callbacks, **kwargs)
+    def __init__(self, **kwargs):
+        super().__init__('wss://api.exchange.bitcoin.com/api/2/ws', **kwargs)
         self.__reset()
 
     def __reset(self):
         self.l2_book = {}
         self.seq_no = {}
 
-    async def subscribe(self, websocket):
-        self.websocket = websocket
+    async def subscribe(self, conn: AsyncConnection):
         self.__reset()
-        for chan in self.channels if self.channels else self.config:
-            for pair in self.pairs if self.pairs else self.config[chan]:
-                await websocket.send(json.dumps(
+        for chan in set(self.channels or self.subscription):
+            for pair in set(self.symbols or self.subscription[chan]):
+                await conn.send(json.dumps(
                     {
                         "method": chan,
                         "params": {
@@ -49,7 +48,7 @@ class BitcoinCom(Feed):
     async def _trade(self, msg: dict, timestamp: float):
         for trade in msg['data']:
             await self.callback(TRADES, feed=self.id,
-                                pair=pair_exchange_to_std(msg['symbol']),
+                                symbol=symbol_exchange_to_std(msg['symbol']),
                                 side=BUY if trade['side'] == 'buy' else SELL,
                                 amount=Decimal(trade['quantity']),
                                 price=Decimal(trade['price']),
@@ -59,14 +58,14 @@ class BitcoinCom(Feed):
 
     async def _ticker(self, msg: dict, timestamp: float):
         await self.callback(TICKER, feed=self.id,
-                            pair=pair_exchange_to_std(msg['symbol']),
+                            symbol=symbol_exchange_to_std(msg['symbol']),
                             bid=Decimal(msg['bid']),
                             ask=Decimal(msg['ask']),
                             timestamp=timestamp_normalize(self.id, msg['timestamp']),
                             receipt_timestamp=timestamp)
 
     async def _book_snapshot(self, msg: dict, timestamp: float):
-        pair = pair_exchange_to_std(msg['symbol'])
+        pair = symbol_exchange_to_std(msg['symbol'])
         self.l2_book[pair] = {
             BID: sd({
                 Decimal(bid['price']): Decimal(bid['size']) for bid in msg['bid']
@@ -79,7 +78,7 @@ class BitcoinCom(Feed):
 
     async def _book_update(self, msg: dict, timestamp: float):
         delta = {BID: [], ASK: []}
-        pair = pair_exchange_to_std(msg['symbol'])
+        pair = symbol_exchange_to_std(msg['symbol'])
         for side in ('bid', 'ask'):
             s = BID if side == 'bid' else ASK
             for entry in msg[side]:
@@ -93,7 +92,8 @@ class BitcoinCom(Feed):
                     self.l2_book[pair][s][price] = amount
         await self.book_callback(self.l2_book[pair], L2_BOOK, pair, False, delta, timestamp_normalize(self.id, msg['timestamp']), timestamp)
 
-    async def message_handler(self, msg: str, timestamp: float):
+    async def message_handler(self, msg: str, conn, timestamp: float):
+
         msg = json.loads(msg, parse_float=Decimal)
         if 'result' in msg and msg['result'] is True:
             return

@@ -1,23 +1,23 @@
 '''
-Copyright (C) 2017-2020  Bryant Moscon - bmoscon@gmail.com
+Copyright (C) 2017-2021  Bryant Moscon - bmoscon@gmail.com
 
 Please see the LICENSE file for the terms and conditions
 associated with this software.
 '''
-from time import time
 import hashlib
 import hmac
-import requests
+import logging
 import urllib
 from decimal import Decimal
-import logging
+from time import time
 
 import pandas as pd
+import requests
 from sortedcontainers.sorteddict import SortedDict as sd
 
+from cryptofeed.defines import BID, ASK, BUY, CANCELLED, FILLED, LIMIT, OPEN, PARTIAL, POLONIEX, SELL
 from cryptofeed.rest.api import API, request_retry
-from cryptofeed.defines import POLONIEX, BUY, SELL, BID, ASK, LIMIT, OPEN, PARTIAL, FILLED, CANCELLED
-from cryptofeed.standards import pair_std_to_exchange, pair_exchange_to_std, normalize_trading_options
+from cryptofeed.standards import normalize_trading_options, symbol_exchange_to_std, symbol_std_to_exchange
 
 
 LOG = logging.getLogger('rest')
@@ -51,7 +51,7 @@ class Poloniex(API):
 
         return {
             'order_id': order_id,
-            'symbol': symbol if symbol else pair_exchange_to_std(data['currencyPair']),
+            'symbol': symbol if symbol else symbol_exchange_to_std(data['currencyPair']),
             'side': BUY if data['type'] == 'buy' else SELL,
             'order_type': LIMIT,
             'price': Decimal(data['rate']),
@@ -108,10 +108,10 @@ class Poloniex(API):
         payload['nonce'] = int(time() * 1000)
 
         paybytes = urllib.parse.urlencode(payload).encode('utf8')
-        sign = hmac.new(bytes(self.key_secret, 'utf8'), paybytes, hashlib.sha512).hexdigest()
+        sign = hmac.new(bytes(self.config.key_secret, 'utf8'), paybytes, hashlib.sha512).hexdigest()
 
         headers = {
-            "Key": self.key_id,
+            "Key": self.config.key_id,
             "Sign": sign,
             'Content-Type': 'application/x-www-form-urlencoded'
         }
@@ -122,16 +122,16 @@ class Poloniex(API):
 
     # Public API Routes
     def ticker(self, symbol: str, retry=None, retry_wait=10):
-        sym = pair_std_to_exchange(symbol, self.ID)
+        sym = symbol_std_to_exchange(symbol, self.ID)
         data = self._get("returnTicker", retry=retry, retry_wait=retry_wait)
-        return {'pair': symbol,
+        return {'symbol': symbol,
                 'feed': self.ID,
                 'bid': Decimal(data[sym]['lowestAsk']),
                 'ask': Decimal(data[sym]['highestBid'])
                 }
 
     def l2_book(self, symbol: str, retry=None, retry_wait=0):
-        sym = pair_std_to_exchange(symbol, self.ID)
+        sym = symbol_std_to_exchange(symbol, self.ID)
         data = self._get("returnOrderBook", {'currencyPair': sym}, retry=retry, retry_wait=retry_wait)
         return {
             BID: sd({
@@ -147,7 +147,7 @@ class Poloniex(API):
     def _trade_normalize(self, trade, symbol):
         return {
             'timestamp': pd.Timestamp(trade['date']).timestamp(),
-            'pair': pair_exchange_to_std(symbol),
+            'symbol': symbol_exchange_to_std(symbol),
             'id': trade['tradeID'],
             'feed': self.ID,
             'side': BUY if trade['type'] == 'buy' else SELL,
@@ -156,7 +156,7 @@ class Poloniex(API):
         }
 
     def trades(self, symbol, start=None, end=None, retry=None, retry_wait=10):
-        symbol = pair_std_to_exchange(symbol, self.ID)
+        symbol = symbol_std_to_exchange(symbol, self.ID)
 
         @request_retry(self.ID, retry, retry_wait)
         def helper(s=None, e=None):
@@ -202,18 +202,18 @@ class Poloniex(API):
         payload = {"currencyPair": "all"}
         data = self._post("returnOpenOrders", payload)
         if isinstance(data, dict):
-            data = {pair_exchange_to_std(key): val for key, val in data.items()}
+            data = {symbol_exchange_to_std(key): val for key, val in data.items()}
 
         ret = []
-        for pair in data:
-            if data[pair] == []:
+        for symbol in data:
+            if data[symbol] == []:
                 continue
-            for order in data[pair]:
-                ret.append(Poloniex._order_status(order, symbol=pair))
+            for order in data[symbol]:
+                ret.append(Poloniex._order_status(order, symbol=symbol))
         return ret
 
     def trade_history(self, symbol: str, start=None, end=None):
-        payload = {'currencyPair': pair_std_to_exchange(symbol, self.ID)}
+        payload = {'currencyPair': symbol_std_to_exchange(symbol, self.ID)}
 
         if start:
             payload['start'] = API._timestamp(start).timestamp()
@@ -254,7 +254,7 @@ class Poloniex(API):
             parameters = {
                 normalize_trading_options(self.ID, o): 1 for o in options
             }
-        parameters['currencyPair'] = pair_std_to_exchange(symbol, self.ID)
+        parameters['currencyPair'] = symbol_std_to_exchange(symbol, self.ID)
         parameters['amount'] = str(amount)
         parameters['rate'] = str(price)
 

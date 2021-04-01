@@ -1,19 +1,21 @@
 '''
-Copyright (C) 2017-2020  Bryant Moscon - bmoscon@gmail.com
+Copyright (C) 2017-2021  Bryant Moscon - bmoscon@gmail.com
 
 Please see the LICENSE file for the terms and conditions
 associated with this software.
 '''
-from yapic import json
 import logging
-import requests
 from decimal import Decimal
 
 from sortedcontainers import SortedDict as sd
+from yapic import json
 
+from cryptofeed.connection import AsyncConnection
+from cryptofeed.defines import BID, ASK, BUY, FUNDING, KRAKEN_FUTURES, L2_BOOK, OPEN_INTEREST, SELL, TICKER, TRADES
+from cryptofeed.exceptions import MissingSequenceNumber
 from cryptofeed.feed import Feed
-from cryptofeed.defines import TRADES, BUY, SELL, BID, ASK, TICKER, FUNDING, L2_BOOK, KRAKEN_FUTURES, OPEN_INTEREST
 from cryptofeed.standards import timestamp_normalize
+
 
 LOG = logging.getLogger('feedhandler')
 
@@ -21,16 +23,16 @@ LOG = logging.getLogger('feedhandler')
 class KrakenFutures(Feed):
     id = KRAKEN_FUTURES
 
-    def __init__(self, pairs=None, channels=None, callbacks=None, **kwargs):
-        super().__init__('wss://futures.kraken.com/ws/v1', pairs=pairs, channels=channels, callbacks=callbacks, **kwargs)
+    def __init__(self, **kwargs):
+        super().__init__('wss://futures.kraken.com/ws/v1', **kwargs)
 
+        # TODO: the same verification (below) is done in Bitmex and Kraken => share this code in a common function in super class Feed
         instruments = self.get_instruments()
-        if self.config:
-            config_instruments = list(self.config.values())
-            self.pairs = [
-                pair for inner in config_instruments for pair in inner]
+        if self.subscription:
+            subscribing_instruments = list(self.subscription.values())
+            self.symbols = set(pair for inner in subscribing_instruments for pair in inner)
 
-        for pair in self.pairs:
+        for pair in self.symbols:
             if pair not in instruments:
                 raise ValueError(f"{pair} is not active on {self.id}")
 
@@ -39,20 +41,16 @@ class KrakenFutures(Feed):
     def __reset(self):
         self.open_interest = {}
         self.l2_book = {}
+        self.seq_no = {}
 
-    @staticmethod
-    def get_instruments():
-        r = requests.get('https://futures.kraken.com/derivatives/api/v3/instruments').json()
-        return {e['symbol'].upper(): e['symbol'].upper() for e in r['instruments']}
-
-    async def subscribe(self, websocket):
+    async def subscribe(self, conn: AsyncConnection):
         self.__reset()
-        for chan in self.channels if self.channels else self.config:
-            await websocket.send(json.dumps(
+        for chan in set(self.channels or self.subscription):
+            await conn.send(json.dumps(
                 {
                     "event": "subscribe",
                     "feed": chan,
-                    "product_ids": self.pairs if not self.config else list(self.config[chan])
+                    "product_ids": list(self.symbols or self.subscription[chan])
                 }
             ))
 
@@ -71,7 +69,7 @@ class KrakenFutures(Feed):
         }
         """
         await self.callback(TRADES, feed=self.id,
-                            pair=pair,
+                            symbol=pair,
                             side=BUY if msg['side'] == 'buy' else SELL,
                             amount=Decimal(msg['qty']),
                             price=Decimal(msg['price']),
@@ -95,7 +93,7 @@ class KrakenFutures(Feed):
             "maturityTime": 0
         }
         """
-        await self.callback(TICKER, feed=self.id, pair=pair, bid=msg['bid'], ask=msg['ask'], timestamp=timestamp, receipt_timestamp=timestamp)
+        await self.callback(TICKER, feed=self.id, symbol=pair, bid=msg['bid'], ask=msg['ask'], timestamp=timestamp, receipt_timestamp=timestamp)
 
     async def _book_snapshot(self, msg: dict, pair: str, timestamp: float):
         """
@@ -140,6 +138,10 @@ class KrakenFutures(Feed):
             "timestamp": 1565342713929
         }
         """
+        if pair in self.seq_no and self.seq_no[pair] + 1 != msg['seq']:
+            raise MissingSequenceNumber
+        self.seq_no[pair] = msg['seq']
+
         delta = {BID: [], ASK: []}
         s = BID if msg['side'] == 'buy' else ASK
         price = Decimal(msg['price'])
@@ -158,7 +160,7 @@ class KrakenFutures(Feed):
         if msg['tag'] == 'perpetual':
             await self.callback(FUNDING,
                                 feed=self.id,
-                                pair=pair,
+                                symbol=pair,
                                 timestamp=timestamp_normalize(self.id, msg['time']),
                                 receipt_timestamp=timestamp,
                                 tag=msg['tag'],
@@ -170,7 +172,7 @@ class KrakenFutures(Feed):
         else:
             await self.callback(FUNDING,
                                 feed=self.id,
-                                pair=pair,
+                                symbol=pair,
                                 timestamp=timestamp_normalize(self.id, msg['time']),
                                 receipt_timestamp=timestamp,
                                 tag=msg['tag'],
@@ -183,13 +185,14 @@ class KrakenFutures(Feed):
         self.open_interest[pair] = oi
         await self.callback(OPEN_INTEREST,
                             feed=self.id,
-                            pair=pair,
+                            symbol=pair,
                             open_interest=msg['openInterest'],
                             timestamp=timestamp_normalize(self.id, msg['time']),
                             receipt_timestamp=timestamp
                             )
 
-    async def message_handler(self, msg: str, timestamp: float):
+    async def message_handler(self, msg: str, conn, timestamp: float):
+
         msg = json.loads(msg, parse_float=Decimal)
 
         if 'event' in msg:

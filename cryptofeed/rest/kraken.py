@@ -1,24 +1,24 @@
 '''
-Copyright (C) 2017-2020  Bryant Moscon - bmoscon@gmail.com
+Copyright (C) 2017-2021  Bryant Moscon - bmoscon@gmail.com
 
 Please see the LICENSE file for the terms and conditions
 associated with this software.
 '''
-import time
+import base64
 import hashlib
 import hmac
-import requests
-import urllib
-import base64
 import logging
+import time
+import urllib
 from decimal import Decimal
 
 import pandas as pd
+import requests
 from sortedcontainers.sorteddict import SortedDict as sd
 
+from cryptofeed.defines import BID, ASK, BUY, CANCELLED, FILLED, KRAKEN, LIMIT, MARKET, OPEN, SELL
 from cryptofeed.rest.api import API, request_retry
-from cryptofeed.defines import KRAKEN, SELL, BUY, BID, ASK, CANCELLED, OPEN, FILLED, MARKET, LIMIT
-from cryptofeed.standards import pair_std_to_exchange, normalize_trading_options, pair_exchange_to_std
+from cryptofeed.standards import normalize_trading_options, symbol_exchange_to_std, symbol_std_to_exchange
 
 
 LOG = logging.getLogger('rest')
@@ -58,7 +58,7 @@ class Kraken(API):
 
         return {
             'order_id': order_id,
-            'symbol': pair_exchange_to_std(order['descr']['pair']),
+            'symbol': symbol_exchange_to_std(order['descr']['pair']),
             'side': SELL if order['descr']['type'] == 'sell' else BUY,
             'order_type': LIMIT if order['descr']['ordertype'] == 'limit' else MARKET,
             'price': Decimal(order['descr']['price']),
@@ -94,12 +94,12 @@ class Kraken(API):
         encoded = (str(payload['nonce']) + postdata).encode('utf8')
         message = urlpath.encode() + hashlib.sha256(encoded).digest()
 
-        signature = hmac.new(base64.b64decode(self.key_secret),
+        signature = hmac.new(base64.b64decode(self.config.key_secret),
                              message, hashlib.sha512)
         sigdigest = base64.b64encode(signature.digest())
 
         headers = {
-            'API-Key': self.key_id,
+            'API-Key': self.config.key_id,
             'API-Sign': sigdigest.decode()
         }
 
@@ -110,19 +110,19 @@ class Kraken(API):
 
     # public API
     def ticker(self, symbol: str, retry=None, retry_wait=0):
-        sym = pair_std_to_exchange(symbol, self.ID + 'REST')
-        data = self._post_public(f"/public/Ticker", payload={'pair': sym}, retry=retry, retry_wait=retry_wait)
+        sym = symbol_std_to_exchange(symbol, self.ID + 'REST')
+        data = self._post_public("/public/Ticker", payload={'pair': sym}, retry=retry, retry_wait=retry_wait)
 
         data = data['result']
         for _, val in data.items():
-            return {'pair': symbol,
+            return {'symbol': symbol,
                     'feed': self.ID,
                     'bid': Decimal(val['b'][0]),
                     'ask': Decimal(val['a'][0])
                     }
 
     def l2_book(self, symbol: str, retry=None, retry_wait=0):
-        sym = pair_std_to_exchange(symbol, self.ID + 'REST')
+        sym = symbol_std_to_exchange(symbol, self.ID + 'REST')
         data = self._post_public("/public/Depth", {'pair': sym, 'count': 200}, retry=retry, retry_wait=retry_wait)
         for _, val in data['result'].items():
             return {
@@ -143,18 +143,18 @@ class Kraken(API):
             for data in self._historical_trades(symbol, start, end, retry, retry_wait):
                 yield list(map(lambda x: self._trade_normalization(x, symbol), data['result'][next(iter(data['result']))]))
         else:
-            sym = pair_std_to_exchange(symbol, self.ID + 'REST')
+            sym = symbol_std_to_exchange(symbol, self.ID + 'REST')
             data = self._post_public("/public/Trades", {'pair': sym}, retry=retry, retry_wait=retry_wait)
             data = data['result']
             data = data[list(data.keys())[0]]
             yield [self._trade_normalization(d, symbol) for d in data]
 
     def _historical_trades(self, symbol, start_date, end_date, retry, retry_wait, freq='6H'):
-        symbol = pair_std_to_exchange(symbol, self.ID + 'REST')
+        symbol = symbol_std_to_exchange(symbol, self.ID + 'REST')
 
         @request_retry(self.ID, retry, retry_wait)
         def helper(start_date):
-            endpoint = f"{self.api}/public/Trades?pair={symbol}&since={start_date}"
+            endpoint = f"{self.api}/public/Trades?symbol={symbol}&since={start_date}"
             return requests.get(endpoint)
 
         start_date = API._timestamp(start_date).timestamp() * 1000000000
@@ -190,7 +190,7 @@ class Kraken(API):
         """
         return {
             'timestamp': trade[2],
-            'pair': symbol,
+            'symbol': symbol,
             'id': None,
             'feed': self.ID,
             'side': SELL if trade[3] == 's' else BUY,
@@ -252,7 +252,7 @@ class Kraken(API):
             sym = sym.replace('ZGBP', 'GBP')
             sym = sym.replace('ZJPY', 'JPY')
 
-            if pair_exchange_to_std(sym) != symbol:
+            if symbol_exchange_to_std(sym) != symbol:
                 continue
 
             ret.append({
@@ -271,7 +271,7 @@ class Kraken(API):
         ot = normalize_trading_options(self.ID, order_type)
 
         parameters = {
-            'pair': pair_std_to_exchange(symbol, self.ID + 'REST'),
+            'pair': symbol_std_to_exchange(symbol, self.ID + 'REST'),
             'type': 'buy' if side == BUY else 'sell',
             'volume': str(amount),
             'ordertype': ot

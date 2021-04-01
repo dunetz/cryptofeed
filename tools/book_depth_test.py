@@ -1,22 +1,22 @@
 '''
-Copyright (C) 2017-2020  Bryant Moscon - bmoscon@gmail.com
+Copyright (C) 2017-2021  Bryant Moscon - bmoscon@gmail.com
 
 Please see the LICENSE file for the terms and conditions
 associated with this software.
 '''
 from copy import deepcopy
 
-from cryptofeed.callback import BookCallback
 from cryptofeed import FeedHandler
-from cryptofeed.exchanges import Coinbase
+from cryptofeed.callback import BookCallback
 from cryptofeed.defines import L2_BOOK
+from cryptofeed.exchanges import Coinbase
 
 
 PREV = {}
 counter = 0
 
 
-async def book(feed, pair, book, timestamp):
+async def book(feed, symbol, book, timestamp):
     global PREV
     global counter
     if book == PREV:
@@ -35,7 +35,7 @@ async def book(feed, pair, book, timestamp):
 def main():
     f = FeedHandler()
 
-    f.add_feed(Coinbase(max_depth=5, pairs=['BTC-USD'], channels=[L2_BOOK], callbacks={L2_BOOK: BookCallback(book)}))
+    f.add_feed(Coinbase(max_depth=5, symbols=['BTC-USD'], channels=[L2_BOOK], callbacks={L2_BOOK: BookCallback(book)}))
     f.run()
 
 

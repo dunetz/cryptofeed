@@ -1,14 +1,14 @@
 '''
-Copyright (C) 2017-2020  Bryant Moscon - bmoscon@gmail.com
+Copyright (C) 2017-2021  Bryant Moscon - bmoscon@gmail.com
 
 Please see the LICENSE file for the terms and conditions
 associated with this software.
 '''
 
-from cryptofeed.callback import FundingCallback
 from cryptofeed import FeedHandler
-from cryptofeed.exchanges import FTX
+from cryptofeed.callback import FundingCallback
 from cryptofeed.defines import FUNDING
+from cryptofeed.exchanges import FTX
 
 
 # Examples of some handlers for different updates. These currently don't do much.
@@ -24,7 +24,7 @@ async def funding(**kwargs):
 
 def main():
     f = FeedHandler()
-    f.add_feed(FTX(pairs=['BTC-PERP', 'THETA-PERP'], channels=[FUNDING], callbacks={FUNDING: FundingCallback(funding)}))
+    f.add_feed(FTX(symbols=['BTC-PERP', 'THETA-PERP'], channels=[FUNDING], callbacks={FUNDING: FundingCallback(funding)}))
     f.run()
 
 

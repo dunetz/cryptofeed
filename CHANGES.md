@@ -1,13 +1,145 @@
 ## Changelog
 
-### 1.5.1
+### 1.8.0
+  * Bugfix: Init uvloop earlier so backends that use loop will not fail
+  * Docs: Remove FAQ, added performance doc section
+  * Bugfix: #404 - Use AsyncConnection object for Binance OI
+  * Feature: Rework how raw data is stored (when enabled). REST data can now be captured
+  * Feature: New feedhandler method, `add_feed_running` allows user to add feed to running instance of a feedhandler
+  * Feature: create_db defaults to False on InfluxDB backends
+  * Feature: Normalize Bitmex Symbols
+  * Update: Remove extraneous methods in feed objects used to query symbol information
+  * Feature: Use realtime ticker for Binance
+  * Bugfix: Bitmex symbols not being normalized correctly
+  * Bugfix: Fix GCP PubSub backend
+  * Bugfix: Fix historical data REST api for Bitmex
+  * Feature: Use separate tasks (fed by async queue) for backend writing. Redis now uses this method
+  * Bugfix: Allow user specified max depths on Kraken
+  * Feature: Add backend queue support to ZMQ backend
+  * Feature: Add backend queue support to Socket backends
+  * Feature: Add VictoriaMetrics support via backend
+  * Feature: Add backend queue support to influx and elastic
+  * Feature: Candle support
+  * Bugfix: Ignore untradeable symbols in Binance symbol generation
+  * Feature: Add backend support for queues in Postgres. Rework postgres backend and supply example SQL file to create tables for demo
+  * Bugfix: Fix ByBit symbol generation
+  * Feature: Authenticated channel support for OKEX/OKCOIN
+
+
+### 1.7.0 (2021-02-15)
+  * Feature: Use UVLoop if installed (not available on windows)
+  * Bugfix: Allow exchanges to customize their retry delays on error
+  * Feature: New demo code showing user loop management
+  * Feature: Handle more signals for graceful shutdown
+  * Bugfix: BinanceFutures message format change
+  * Feature: Missing sequence number on Coinbase will not reset all data streams, just the affected pair
+  * Feature: Use timestamp from exchange for L2 book data from Coinbase
+  * Bugfix: Blockchain exchange had incorrect timestamps, and incorrect log lines
+  * Bugfix: Wrong datatype in BackendFuturesIndexCallback
+  * Bugfix: Fix bad postgres callback for open_interest and futures_index
+  * Feature: Signal handler installation now optional, can be done separately. This will allow the feedhandler to be run from child threads/loops
+  * Bugfix: Fix binance delivery book ticker (message format change)
+  * Breaking change: Feed object `config` renamed `subscription`
+  * Feature: Configuration passed from feedhandler to exchanges
+  * Breaking change: Most use of `pair` and `pairs` changed to `symbol` and `symbols` to be more consistent with actual usage. pairs.py renamed to symbols.py
+  * Feature: Allow configuring the API KEY ID from Config or from environment variable
+  * Bugfix: Collisions in normalized CoinGecko symbols (this adds about 700 new symbols)
+  * Feature: Add candles function to coinbase
+  * Feature: Explain when Cryptofeed crashes during pairs retrieval
+  * Bugfix: BINANCE_DELIVERY Ticker use msg_type='bookTicker' as for the other BINANCE markets
+  * Feature: Support Bitmex authentication using personal API key and secret
+  * Feature: Print the origin of the configuration (filename, dict) for better developer experience
+  * Bugfix: Add guard against non-supported asyncio add_signal_handler() on windows platforms
+  * Feature: Simplify source code by standardization iterations over channels and symbols
+  * Bugfix: Remove remaining character "*" in book_test.py
+  * Bugfix: Fix return type of the function book_flatten()
+  * Feature: Shutdown multiple backends asynchronously, and close the event loop properly
+  * Bugfix: Repair the Bitfinex FUNDING
+  * Feature: Speedup the handling of Bitfinex messages by reducing intermediate mappings
+  * Feature: Support OKEx options
+  * Bugfix: Cancel the pending tasks to gracefully/properly close the ASyncIO loop
+  * Feature: Support for authenticated websocket data channels
+
+### 1.6.2 (2020-12-25)
+  * Feature: Support for Coingecko aggregated data per coin, to be used with a new data channel 'profile'
+  * Feature: Support for Whale Alert on-chain transaction data per coin, to be used with a new data channel 'transactions'
+  * Bugfix: Reset delay and retry for rest feed
+  * Feature: Add GCP Pub/Sub backend
+  * Bugfix: Fix aggregated callbacks (Renko and OHLCV) when used with exchanges that support order types
+  * Bugfix: Fix broken example/demo code
+  * Feature: New data channel - `futures_index` - demonstrated in ByBit
+  * Feature: Add stop callback when exiting loop, add stop method placeholder for base callbacks
+  * Bugfix: Fix NBBO callback
+  * Feature: Orderbook sequence number validation for HitBTC
+  * Feature: Kraken orderbook checksum support in Kraken
+  * Feature: KrakenFutures sequence number check added
+  * Feature: Add optional caching to postgres backend
+  * Feature: New Exchange - Binance Delivery
+  * Feature: Liquidation for OKEX
+  * Bugfix: Adjust ping interval on websocket connection, some exchanges require pings more frequently
+  * Feature: Checksum validation for orderbooks on OKEX and OKCoin
+  * Feature: Use rotating log handler
+  * Bugfix: Later versions of aiokafka break kafka backend
+  * Bugfix: Huobi sends empty book updates for delisted pairs
+  * Bugfix: Harden channel map usage in Kraken
+  * Feature: Config file support
+  * Bugfix: Subscribing to all BitMEX symbols gives 400 error - message too long
+  * Bugfix: Cleanup of code - fixed a few examples and resolved all outstanding flake8 issues
+  * Bugfix: Fix Bitfinex pair normalization
+  * Feature: Refactor connection handling. New connection design allows feeds to open multiple connections
+  * Feature: Update BitMax to use the new BitMax Pro API - includes sequence number verification on books
+  * Feature: Bybit - support for USDT perpetual data channels
+  * Feature: Can now configure more than 25 Bitfinex pair/channel combinations
+  * Feature: Support more than 200 pair/stream combinations on Binance from a single Feed
+  * Feature: Support for the bitFlyer exchange
+  * Feature: Update Kraken to work with very large numbers of trading pairs
+
+### 1.6.1 (2020-11-12)
+  * Feature: New kwarg for exchange feed - `snapshot_interval` - used to control number of snapshot updates sent to client
+  * Feature: Support for rabbitmq message routing
+  * Feature: Support for raw file playback. Will be useful for testing features and building out new test suites for cryptofeed.
+  * Feature: Arctic library quota can be configured, new default is unlimited
+  * Feature: New exchange: Probit
+  * Bugfix: Correctly store receipt timestamp in mongo backend
+  * Bugfix: FTX - set a funding rate requests limit constant (10 requests per second, 60 seconds pause between loops)
+  * Bugfix: Open Interest data on FTX erroneously had timestamps set to None
+  * Update: Binance Jersey shutdown - feed removed
+  * Bugfix: Fixed open interest channel for Binance Delivery
+
+### 1.6.0 (2020-09-28)
+  * Feature: Validate FTX book checksums (optionally enabled)
+  * Bugfix: Subscribing only to open interest on Binance futures gave connection errors
+  * Feature: Authentication for Influxdb 1.x
+  * Feature: Override logging defaults with environment variables (filename and log level)
+  * Bugfix: For Coinbase L3 books need to ignore/drop some change updates (per docs)
+  * Bugfix: Obey rate limits when using Coinbase REST API to get L3 book snapshots
+  * Bugfix: Ignore auction updates from Gemini
+  * Feature: Add order type (limit/market) for Kraken Trades
+  * Feature: Exchange specific information available via info classmethod - contains pairs, data channels and tick size
+  * Feature: Funding data supported on HuobiSwap
+  * Bugfix: Fix broken mongo callbacks in backends
+
+### 1.5.1 (2020-08-26)
   * Bugfix: #136 - Kraken Rate limiting
   * Feature: Funding data on Binance Futures
+  * Bugfix: Support new Huobi tradeId field, old id field deprecated
+  * Bugfix: Unclear errors when unsupported data feeds used
+  * Bugfix: Handle order status messages more gracefully in Coinbase
+  * Bugfix: Fix Kraken pair mappings
+  * Feature: New Exchange - Gate.io
+  * Feature: Remove \_SWAP, \_FUTURE channel (and callback) types - determine correct type at subscribe time based on symbol
+  * Docs: Add documentation about callbacks
+  * Feature: Deribit provides sequence number for book updates - check them to ensure no messages lost
+  * Bugfix: Fix timestamp on Binance Futures Open Interest
+  * Bugfix: Update/standardize liquidation callbacks
+  * Feature: Update Upbit subscription methods based on updated docs
+  * Bugfix: Ticker not working correctly on Binance Futures
+  * Feature: Liquidations callbacks for backends
 
 ### 1.5.0 (2020-07-31)
   * Feature: New Exchange - FTX US
   * Feature: Add funding data to rest library
-  * Bugfix: DSX updated their api, websocket no longer supported. Removing DSX
+  * Bugfix: DSX updated their API, websocket no longer supported. Removing DSX
   * Feature: Websocket client now uses unbounded message queue
   * Feature: Support for HuobiDM next quarter contracts
   * Bugfix: Fix datetime fields in elasticsearch
@@ -39,8 +171,8 @@
   * Feature: Open Interest callbacks added to all backends
   * Change: Instrument removed in favor of open interest
   * Bugfix: Huobi feedhandlers not properly setting forced indicator for book updates, breaking deltas
-  * Bugfix: Some kraken futures funding fields not always populated
-  * Feature: Open interest updates for kraken futures
+  * Bugfix: Some Kraken futures funding fields not always populated
+  * Feature: Open interest updates for Kraken futures
   * Feature: Open interest updates for Deribit
   * Bugfix: FTX ticker can have Nones for bid/ask
   * Feature: InfluxDB 2.0 support
@@ -51,7 +183,7 @@
   * Feature: New exchange: Binance Futures
   * Feature: New Exchange: Binance Jersey
   * Feature: Funding data on Kraken Futures
-  * Feature: User defined pair seperator (default still -)
+  * Feature: User defined pair separator (default still -)
   * Feature: Postgres backend
   * Feature: Deribit Funding
   * Bugfix: Deribit subscriptions using config subscribed to symbols incorrectly
@@ -72,7 +204,7 @@
   * Feature: Backfill Bitmex historical trade data from S3 Bucket
   * Feature: RabbitMQ backend
   * Feature: Custom Depth and deltas for all L2 book updates
-  * Feature: Support new 100ms book diff channel on binance
+  * Feature: Support new 100ms book diff channel on Binance
   * Feature: Bittrex exchange support
   * Feature: Ticker support in Redis and Kafka Backends
   * Feature: Ticker callbacks require/contain timestamp
@@ -105,7 +237,7 @@
 
 ### 0.24.0 (2019-06-19)
   * Bugfix: Book Delta Conversion issue in backends
-  * Bugfix: Tweak BitMEX rest api to handle more errors more gracefully
+  * Bugfix: Tweak BitMEX rest API to handle more errors more gracefully
   * Feature: Deribit Exchange support
   * Feature: Instrument channel
   * Bugfix: support Kraken websocket API changes
@@ -150,7 +282,7 @@
   * Feature: Support Huobi Global and Huobi USA
 
 ### 0.20.2 (2019-03-19)
-  * Bugfix: Kraken REST api using wrong symbol for trades
+  * Bugfix: Kraken REST API using wrong symbol for trades
   * Feature: Complete work on standardizing Bitfinex rest API
   * Bugfix: Allow index symbols on Bitmex
 
@@ -165,7 +297,7 @@
   * Feature #56: Experimental support for fine grained configuration per exchange
   * Feature #58: Support Kraken websocket API
   * Feature: Only generate trading pair conversions for configured exchanges
-  * Feature: Historical trade data on REST api for Kraken
+  * Feature: Historical trade data on REST API for Kraken
 
 ### 0.19.2 (2019-01-21)
   * Feature #55: OHLCV aggregation method in backends plus support for user defined aggregators
@@ -186,11 +318,11 @@
   * Bugfix: Bitfinex REST now properly handles cases when there are more than 1000 updates for a single tick
 
 ### 0.17.4 (2018-11-17)
-  * Readme change for long description rendering issue
+  * README change for long description rendering issue
 
 ### 0.17.3 (2018-11-17)
   * Feature #41: Rework trading pairs to generate them dynamically (as opposed to hard coded)
-  * Feature: When book depth configured Redis, ZMQ and UDP backends only report book changes when changed occurred in 
+  * Feature: When book depth configured Redis, ZMQ and UDP backends only report book changes when changed occurred in
              depth window
   * Feature: TCP socket backend support
   * Feature: UDS backend support
@@ -203,17 +335,17 @@
   * Bugfix #43: Coinbase L2 book used "0" rather than 0 for comparisons against decimal.Decimal
   * Feature: REST feed market data supported via normal subscription methods
   * Feature: Kraken support
-  * Bugfix: Bitfinex book timestamps match expected bitfinex timestamps (in ms)
+  * Bugfix: Bitfinex book timestamps match expected Bitfinex timestamps (in ms)
 
 ### 0.17.0 (2018-10-13)
   * Feature: Timestamps for orderbooks and book deltas
   * Feature #40: NBBO now uses best bid/ask from L2 books
-  * Feature #28: GDAX now renamed Coinbase and uses coinbase endpoints
-  * Feature: ZeroMQ backend. Write updates directly to zmq connection
-  * Feature: UDP Socket backend. Write updates directy to UDP socket
+  * Feature #28: GDAX now renamed Coinbase and uses Coinbase endpoints
+  * Feature: ZeroMQ backend. Write updates directly to ZMQ connection
+  * Feature: UDP Socket backend. Write updates directly to UDP socket
 
 ### 0.16.0 (2018-10-4)
-  * Feature: L2 books are now all price aggregted amounts, L3 books are price aggregated orders
+  * Feature: L2 books are now all price aggregated amounts, L3 books are price aggregated orders
   * Book deltas supported on all feeds
   * Bugfix: Fix NBBO feed
 
@@ -228,22 +360,22 @@
   * Added some docstrings
   * Feature: Add exchanges by name to feedhandler. Easier to instantiate a feedhandler from config
   * Logging improvements
-  * Bugfix: non-gathered futures were suppressing exceptions when multiple feeds are configured. Changed to tasks 
+  * Bugfix: non-gathered futures were suppressing exceptions when multiple feeds are configured. Changed to tasks
   * Redis backend uses a connection pool
 
 ### 0.14.0 (2018-09-04)
-  * Feature: support for writing order books directly to redis
-  * Feature: ability to specify book depth for redis updates
+  * Feature: support for writing order books directly to Redis
+  * Feature: ability to specify book depth for Redis updates
 
 ### 0.13.3 (2018-08-31)
-  * Feature: normalize bitfinex funding symbols
+  * Feature: normalize Bitfinex funding symbols
 
 ### 0.13.2 (2018-08-31)
-  * Bugfix: fix symbol in bitfinex rest
+  * Bugfix: fix symbol in Bitfinex rest
 
 ### 0.13.1 (2018-08-31)
   * Feature: access rest endpoints via getitem / []
-  * Bugfix: #31 - funding channel broke gemini
+  * Bugfix: #31 - funding channel broke Gemini
   * Feature: Book deltas for GDAX
   * Bugfix: Fix intervals on Bitmex (rest)
 
@@ -252,11 +384,11 @@
   * Feature: Funding historical data via rest
   * Bugfix: Python 3.7 compatibility
   * Feature: Rest trade APIs are now generators
-  * Feature: funding data on bitfinex - ws and rest
+  * Feature: funding data on Bitfinex - ws and rest
 
 ### 0.12.0 (2018-08-20)
   * Bugfix: Handle 429s in Bitmex (REST)
-  * Feature: Redis backend for trades to write updates directly to redis
+  * Feature: Redis backend for trades to write updates directly to Redis
   * Bugfix: issue #27 - Bitmex trades missing timestamps
 
 ### 0.11.1 (2018-08-18)
@@ -266,7 +398,7 @@
 
 ### 0.11.0 (2018-08-05)
   * Feature: Support for delta updates for order books
-  * REST api work started
+  * REST API work started
 
 ### 0.10.2
   * Bugfix: Clear data structures on reconnect in bitmex
@@ -278,7 +410,7 @@
   * Feature: Reconnect when a connection is lost
   * Bugfix #22: Check for additional connection failures
   * Feature #4: Trade ID support
-  * Feature: Account for new gemini message type
+  * Feature: Account for new Gemini message type
 
 ### 0.10.0 (2018-03-18)
   * Feature: Bitmex

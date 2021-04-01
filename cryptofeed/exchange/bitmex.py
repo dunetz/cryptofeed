@@ -1,21 +1,24 @@
 '''
-Copyright (C) 2017-2020  Bryant Moscon - bmoscon@gmail.com
+Copyright (C) 2017-2021  Bryant Moscon - bmoscon@gmail.com
 
 Please see the LICENSE file for the terms and conditions
 associated with this software.
 '''
-from yapic import json
+import hashlib
+import hmac
 import logging
+import os
+import time
 from collections import defaultdict
-from decimal import Decimal
 from datetime import datetime as dt
+from decimal import Decimal
 
-import requests
 from sortedcontainers import SortedDict as sd
+from yapic import json
 
+from cryptofeed.defines import BID, ASK, BITMEX, BUY, FUNDING, L2_BOOK, LIQUIDATIONS, OPEN_INTEREST, SELL, TICKER, TRADES
 from cryptofeed.feed import Feed
-from cryptofeed.defines import L2_BOOK, BUY, SELL, BID, ASK, TRADES, FUNDING, BITMEX, OPEN_INTEREST, TICKER, LIQUIDATIONS
-from cryptofeed.standards import timestamp_normalize
+from cryptofeed.standards import timestamp_normalize, symbol_exchange_to_std
 
 
 LOG = logging.getLogger('feedhandler')
@@ -25,41 +28,17 @@ class Bitmex(Feed):
     id = BITMEX
     api = 'https://www.bitmex.com/api/v1/'
 
-    def __init__(self, pairs=None, channels=None, callbacks=None, **kwargs):
-        super().__init__('wss://www.bitmex.com/realtime', pairs=pairs, channels=channels, callbacks=callbacks, **kwargs)
-
-        active_pairs = self.get_active_symbols()
-        if self.config:
-            pairs = list(self.config.values())
-            self.pairs = [pair for inner in pairs for pair in inner]
-
-        for pair in self.pairs:
-            if not pair.startswith('.'):
-                if pair not in active_pairs:
-                    raise ValueError("{} is not active on BitMEX".format(pair))
+    def __init__(self, **kwargs):
+        super().__init__('wss://www.bitmex.com/realtime', **kwargs)
         self._reset()
 
     def _reset(self):
         self.partial_received = defaultdict(bool)
         self.order_id = {}
-        for pair in self.pairs:
+        for pair in self.normalized_symbols:
+            pair = symbol_exchange_to_std(pair)
             self.l2_book[pair] = {BID: sd(), ASK: sd()}
             self.order_id[pair] = defaultdict(dict)
-
-    @staticmethod
-    def get_symbol_info():
-        return requests.get(Bitmex.api + 'instrument/').json()
-
-    @staticmethod
-    def get_active_symbols_info():
-        return requests.get(Bitmex.api + 'instrument/active').json()
-
-    @staticmethod
-    def get_active_symbols():
-        symbols = []
-        for data in Bitmex.get_active_symbols_info():
-            symbols.append(data['symbol'])
-        return symbols
 
     async def _trade(self, msg: dict, timestamp: float):
         """
@@ -81,7 +60,7 @@ class Bitmex(Feed):
         for data in msg['data']:
             ts = timestamp_normalize(self.id, data['timestamp'])
             await self.callback(TRADES, feed=self.id,
-                                pair=data['symbol'],
+                                symbol=symbol_exchange_to_std(data['symbol']),
                                 side=BUY if data['side'] == 'Buy' else SELL,
                                 amount=Decimal(data['size']),
                                 price=Decimal(data['price']),
@@ -93,10 +72,13 @@ class Bitmex(Feed):
         """
         the Full bitmex book
         """
+        # PERF perf_start(self.id, 'book_msg')
+
         delta = {BID: [], ASK: []}
         # if we reset the book, force a full update
         forced = False
-        pair = msg['data'][0]['symbol']
+        pair = symbol_exchange_to_std(msg['data'][0]['symbol'])
+
         if not self.partial_received[pair]:
             # per bitmex documentation messages received before partial
             # should be discarded
@@ -148,13 +130,15 @@ class Bitmex(Feed):
         else:
             LOG.warning("%s: Unexpected l2 Book message %s", self.id, msg)
             return
+        # PERF perf_end(self.id, 'book_msg')
+        # PERF perf_log(self.id, 'book_msg')
 
         await self.book_callback(self.l2_book[pair], L2_BOOK, pair, forced, delta, timestamp, timestamp)
 
     async def _ticker(self, msg: dict, timestamp: float):
         for data in msg['data']:
             await self.callback(TICKER, feed=self.id,
-                                pair=data['symbol'],
+                                symbol=symbol_exchange_to_std(data['symbol']),
                                 bid=Decimal(data['bidPrice']),
                                 ask=Decimal(data['askPrice']),
                                 timestamp=timestamp_normalize(self.id, data['timestamp']),
@@ -194,7 +178,7 @@ class Bitmex(Feed):
             interval = data['fundingInterval']
             interval = int((interval - dt(interval.year, interval.month, interval.day, tzinfo=interval.tzinfo)).total_seconds())
             await self.callback(FUNDING, feed=self.id,
-                                pair=data['symbol'],
+                                symbol=symbol_exchange_to_std(data['symbol']),
                                 timestamp=ts,
                                 receipt_timestamp=timestamp,
                                 interval=interval,
@@ -441,7 +425,7 @@ class Bitmex(Feed):
             if 'openInterest' in data:
                 ts = timestamp_normalize(self.id, data['timestamp'])
                 await self.callback(OPEN_INTEREST, feed=self.id,
-                                    pair=data['symbol'],
+                                    symbol=symbol_exchange_to_std(data['symbol']),
                                     open_interest=data['openInterest'],
                                     timestamp=ts,
                                     receipt_timestamp=timestamp)
@@ -461,23 +445,18 @@ class Bitmex(Feed):
         if msg['action'] == 'insert':
             for data in msg['data']:
                 await self.callback(LIQUIDATIONS, feed=self.id,
-                                    pair=data['symbol'],
+                                    symbol=symbol_exchange_to_std(data['symbol']),
                                     side=BUY if data['side'] == 'Buy' else SELL,
                                     leaves_qty=Decimal(data['leavesQty']),
                                     price=Decimal(data['price']),
                                     order_id=data['orderID'],
+                                    timestamp=timestamp,
                                     receipt_timestamp=timestamp)
 
-    async def message_handler(self, msg: str, timestamp: float):
+    async def message_handler(self, msg: str, conn, timestamp: float):
+
         msg = json.loads(msg, parse_float=Decimal)
-        if 'info' in msg:
-            LOG.info("%s - info message: %s", self.id, msg)
-        elif 'subscribe' in msg:
-            if not msg['success']:
-                LOG.error("%s: subscribe failed: %s", self.id, msg)
-        elif 'error' in msg:
-            LOG.error("%s: Error message from exchange: %s", self.id, msg)
-        else:
+        if 'table' in msg:
             if msg['table'] == 'trade':
                 await self._trade(msg, timestamp)
             elif msg['table'] == 'orderBookL2':
@@ -491,14 +470,46 @@ class Bitmex(Feed):
             elif msg['table'] == 'liquidation':
                 await self._liquidation(msg, timestamp)
             else:
-                LOG.warning("%s: Unhandled message %s", self.id, msg)
+                LOG.warning("%s: Unhandled table=%r in %r", conn.uuid, msg['table'], msg)
+        elif 'info' in msg:
+            LOG.info("%s: Info message from exchange: %s", conn.uuid, msg)
+        elif 'subscribe' in msg:
+            if not msg['success']:
+                LOG.error("%s: Subscribe failure: %s", conn.uuid, msg)
+        elif 'error' in msg:
+            LOG.error("%s: Error message from exchange: %s", conn.uuid, msg)
+        elif 'request' in msg:
+            if msg['success']:
+                LOG.info("%s: Success %s", conn.uuid, msg['request'].get('op'))
+            else:
+                LOG.warning("%s: Failure %s", conn.uuid, msg['request'])
+        else:
+            LOG.warning("%s: Unexpected message from exchange: %s", conn.uuid, msg)
 
     async def subscribe(self, websocket):
         self._reset()
+        await self._authenticate(websocket)
         chans = []
-        for channel in self.channels if not self.config else self.config:
-            for pair in self.pairs if not self.config else self.config[channel]:
-                chans.append("{}:{}".format(channel, pair))
+        for chan in set(self.channels or self.subscription):
+            for pair in set(self.symbols or self.subscription[chan]):
+                chans.append(f"{chan}:{pair}")
 
-        await websocket.send(json.dumps({"op": "subscribe",
-                                         "args": chans}))
+        for i in range(0, len(chans), 10):
+            await websocket.send(json.dumps({"op": "subscribe",
+                                             "args": chans[i:i + 10]}))
+
+    async def _authenticate(self, conn):
+        """Send API Key with signed message."""
+        # Docs: https://www.bitmex.com/app/apiKeys
+        # https://github.com/BitMEX/sample-market-maker/blob/master/test/websocket-apikey-auth-test.py
+        config = self.config[self.id.lower()]
+        key_id = os.environ.get('CF_BITMEX_KEY_ID') or config.key_id
+        key_secret = os.environ.get('CF_BITMEX_KEY_SECRET') or config.key_secret
+        if key_id and key_secret:
+            LOG.info('%s: Authenticate with signature', conn.uuid)
+            expires = int(time.time()) + 365 * 24 * 3600  # One year
+            msg = f'GET/realtime{expires}'.encode('utf-8')
+            signature = hmac.new(key_secret.encode('utf-8'), msg, digestmod=hashlib.sha256).hexdigest()
+            await conn.send(json.dumps({'op': 'authKeyExpires', 'args': [key_id, expires, signature]}))
+        else:
+            LOG.info('%s: No authentication. Enable it using config or env. vars: CF_BITMEX_KEY_ID and CF_BITMEX_KEY_SECRET', conn.uuid)

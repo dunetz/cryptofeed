@@ -1,5 +1,5 @@
 '''
-Copyright (C) 2017-2020  Bryant Moscon - bmoscon@gmail.com
+Copyright (C) 2017-2021  Bryant Moscon - bmoscon@gmail.com
 
 Please see the LICENSE file for the terms and conditions
 associated with this software.
@@ -13,18 +13,19 @@ BITFINEX = 'BITFINEX'
 BITMEX = 'BITMEX'
 BINANCE = 'BINANCE'
 BINANCE_US = 'BINANCE_US'
-BINANCE_JERSEY = 'BINANCE_JERSEY'
 BINANCE_FUTURES = 'BINANCE_FUTURES'
+BINANCE_DELIVERY = 'BINANCE_DELIVERY'
+BITFLYER = 'BITFLYER'
 BITSTAMP = 'BITSTAMP'
 BITTREX = 'BITTREX'
 BLOCKCHAIN = 'BLOCKCHAIN'
 BYBIT = 'BYBIT'
 COINBASE = 'COINBASE'
-COINBENE = 'COINBENE'
 DERIBIT = 'DERIBIT'
 EXX = 'EXX'
 FTX = 'FTX'
 FTX_US = 'FTX_US'
+GATEIO = 'GATEIO'
 GEMINI = 'GEMINI'
 HITBTC = 'HITBTC'
 HUOBI = 'HUOBI'
@@ -35,11 +36,16 @@ KRAKEN_FUTURES = 'KRAKEN_FUTURES'
 OKCOIN = 'OKCOIN'
 OKEX = 'OKEX'
 POLONIEX = 'POLONIEX'
+PROBIT = 'PROBIT'
 BITCOINCOM = 'BITCOINCOM'
 BITMAX = 'BITMAX'
 UPBIT = 'UPBIT'
 
+COINGECKO = 'COINGECKO'
+WHALE_ALERT = 'WHALE_ALERT'
 
+
+# Market Data
 L2_BOOK = 'l2_book'
 L3_BOOK = 'l3_book'
 BOOK_DELTA = 'book_delta'
@@ -49,17 +55,14 @@ VOLUME = 'volume'
 FUNDING = 'funding'
 OPEN_INTEREST = 'open_interest'
 LIQUIDATIONS = 'liquidations'
+FUTURES_INDEX = 'futures_index'
 UNSUPPORTED = 'unsupported'
+MARKET_INFO = 'market_info'
+TRANSACTIONS = 'transactions'
+CANDLES = 'candles'
 
-
-L2_BOOK_SWAP = 'l2_book_swap'
-TRADES_SWAP = 'trades_swap'
-TICKER_SWAP = 'ticker_swap'
-
-
-L2_BOOK_FUTURES = 'l2_book_futures'
-TRADES_FUTURES = 'trades_futures'
-TICKER_FUTURES = 'ticker_futures'
+# Account Data / Authenticated Channels
+ORDER_INFO = 'order_info'
 
 
 BUY = 'buy'
@@ -86,11 +89,10 @@ CANCELLED = 'cancelled'
 """
 L2 Orderbook Layout
     * BID and ASK are SortedDictionaries
-    * Currency Pairs are defined in standards.py
     * PRICE and SIZE are of type decimal.Decimal
 
 {
-    currency pair: {
+    symbol: {
         BID: {
             PRICE: SIZE,
             PRICE: SIZE,
@@ -102,7 +104,7 @@ L2 Orderbook Layout
             ...
         }
     },
-    currency pair: {
+    symbol: {
         ...
     },
     ...
@@ -113,7 +115,7 @@ L3 Orderbook Layout
     * Similar to L2, except orders are not aggregated by price,
       each price level contains the individual orders for that price level
 {
-    currency pair: {
+    Symbol: {
         BID: {
             PRICE: {
                 order-id: amount,
@@ -141,7 +143,7 @@ L3 Orderbook Layout
             ...
         }
     },
-    currency pair: {
+    Symbol: {
         ...
     },
     ...
